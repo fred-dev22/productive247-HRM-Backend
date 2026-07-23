@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "productive247-hrm-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "C:\\Users\\fred\\Desktop\\AfrikEdge\\productive247-hrm"],
+      "port": 5173
+    }
+  ]
+}

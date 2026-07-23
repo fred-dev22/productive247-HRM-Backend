@@ -1,0 +1,31 @@
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsBoolean,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+import { CalendarWorkDayDto } from './calendar-work-day.dto';
+
+export class CreateCalendarDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  Name: string;
+
+  @IsOptional()
+  @IsBoolean()
+  IsDefault?: boolean;
+
+  // Exactly one row per day of the week (Monday..Sunday) — the frontend
+  // always sends the full week, replaced atomically on update.
+  @ValidateNested({ each: true })
+  @Type(() => CalendarWorkDayDto)
+  @ArrayMinSize(7)
+  @ArrayMaxSize(7)
+  WorkDays: CalendarWorkDayDto[];
+}
