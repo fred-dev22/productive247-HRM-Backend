@@ -3,7 +3,9 @@ import {
   IsInt,
   IsNotEmpty,
   IsNumber,
+  IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -33,4 +35,12 @@ export class CreateCompanySettingsDto {
   @IsInt()
   @Min(0)
   DefaultCarryOverCap: number;
+
+  // Jour du mois (1-28) où tourne la génération automatique des acquisitions
+  // de congés — optionnel, génération manuelle uniquement tant que non défini.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(28)
+  LeaveAccrualRunDay?: number;
 }

@@ -34,7 +34,10 @@ model OrganizationUnit {
   Code      String  @unique @db.NVarChar(20)
   Name      String  @db.NVarChar(150)
   // Type: Direction | Department | Service
-  Type      String  @db.NVarChar(20)
+  Type            String  @db.NVarChar(20)
+  // Absent du modele PDF — identifiant legal/fiscal local (RCS, NIF...),
+  // ajoute a la demande cote UI (ecrans de creation/edition d'entite).
+  LegalIdentifier String? @db.NVarChar(50)
   ParentId  String? @db.UniqueIdentifier
   // Responsable designe de cette unite. Nullable en pratique : une unite peut
   // exister avant qu'un employe lui soit rattache (bootstrap / transition).
@@ -158,6 +161,10 @@ model Employee {
 
   PositionId         String? @db.UniqueIdentifier
   OrganizationUnitId String  @db.UniqueIdentifier
+  // Categorie de frais (per diem mission) — voir EmployeeCategory /
+  // ExpenseConfig. Nullable : un employe sans categorie assignee ne peut pas
+  // soumettre d'ordre de mission tant que le RH ne l'a pas renseignee.
+  EmployeeCategoryId String? @db.UniqueIdentifier
 
   // Compte utilisateur de la plateforme AfrikEdge donnant acces au systeme,
   // nullable si l'employe n'a pas de compte. Table locale (hors modele PDF).
@@ -170,9 +177,10 @@ model Employee {
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
 
-  position         Position?        @relation(fields: [PositionId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  organizationUnit OrganizationUnit @relation("EmployeeOrganizationUnit", fields: [OrganizationUnitId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  user             User?            @relation(fields: [UserId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  position         Position?         @relation(fields: [PositionId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  organizationUnit OrganizationUnit  @relation("EmployeeOrganizationUnit", fields: [OrganizationUnitId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  user             User?             @relation(fields: [UserId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  employeeCategory EmployeeCategory? @relation(fields: [EmployeeCategoryId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   createdByEmployee  Employee?  @relation("EmployeeCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   employeesCreated   Employee[] @relation("EmployeeCreatedBy")
@@ -221,6 +229,8 @@ model Employee {
   leaveRequestsCreated   LeaveRequest[] @relation("LeaveRequestCreatedBy")
   leaveRequestsModified  LeaveRequest[] @relation("LeaveRequestModifiedBy")
 
+  leaveBalances EmployeeLeaveBalance[]
+
   missionOrders         MissionOrder[] @relation("MissionOrderEmployee")
   missionOrdersCreated  MissionOrder[] @relation("MissionOrderCreatedBy")
   missionOrdersModified MissionOrder[] @relation("MissionOrderModifiedBy")
@@ -262,7 +272,11 @@ model User {
   Email        String    @unique @db.NVarChar(150)
   PasswordHash String    @db.NVarChar(500)
   IsActive     Boolean   @default(true)
-  LastLoginAt  DateTime? @db.DateTime2
+  // Force le changement de mot de passe à la prochaine connexion — vrai par
+  // défaut (mot de passe temporaire fixé à la création du compte via
+  // POST /users), remis à false par PATCH /auth/change-password.
+  MustChangePassword Boolean   @default(true)
+  LastLoginAt        DateTime? @db.DateTime2
 
   // Role attribue a l'activation de l'acces systeme (voir Employee.UserId) —
   // porte le paquet de permissions par defaut, complete/restreint au cas par
@@ -466,6 +480,15 @@ model CompanySettings {
   DayCountingRule           String  @db.NVarChar(20)
   DefaultMonthlyAccrualRate Decimal @db.Decimal(5, 2)
   DefaultCarryOverCap       Int
+  // Jour du mois (1-28) ou tourne la generation automatique des acquisitions
+  // de conges (LeaveTransaction). Nullable : generation manuelle uniquement
+  // tant que l'entreprise n'a pas choisi de jour.
+  LeaveAccrualRunDay     Int?
+  LastLeaveAccrualRunAt  DateTime? @db.DateTime2
+  // Vrai une fois que l'assistant de configuration initiale (calendrier +
+  // structure + equipe) a ete complete par un administrateur — sert de garde
+  // au routeur frontend pour ne plus jamais raffiche l'onboarding ensuite.
+  IsOnboarded Boolean @default(false)
 
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
@@ -567,6 +590,27 @@ model LeaveType {
   leaveTransactions  LeaveTransaction[]
   leaveCancellations LeaveCancellation[]
   leaveRequests      LeaveRequest[]
+  employeeBalances   EmployeeLeaveBalance[]
+}
+
+/// Solde courant de conges par employe et par type — maintenu a jour de
+/// facon incrementale (cron d'acquisition, approbation/annulation de
+/// LeaveRequest) plutot que recalcule a chaque lecture. LeaveTransaction
+/// reste la trace d'audit de chaque mouvement ; ce modele est le cache
+/// rapide que lisent les ecrans (KPI, tableau des soldes).
+model EmployeeLeaveBalance {
+  Id          String   @id @default(uuid()) @db.UniqueIdentifier
+  EmployeeId  String   @db.UniqueIdentifier
+  LeaveTypeId String   @db.UniqueIdentifier
+  Balance     Decimal  @db.Decimal(6, 2) @default(0)
+  ModifiedAt  DateTime @default(now()) @db.DateTime2
+
+  employee  Employee  @relation(fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  leaveType LeaveType @relation(fields: [LeaveTypeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([EmployeeId, LeaveTypeId])
+  @@index([EmployeeId])
+  @@index([LeaveTypeId])
 }
 
 /// Journal unique des transactions de conges. Remplace LeaveAcquisition et
@@ -632,7 +676,12 @@ model LeaveRequest {
   Reason              String?  @db.NVarChar(500)
   InterimEmployeeId   String?  @db.UniqueIdentifier
   // Status: Draft | Pending | InApprovalN1 | InApprovalN2 | InApprovalN3 |
-  // InApprovalN4 | Approved | Rejected | Returned | Cancelled
+  // InApprovalN4 | Approved | Rejected | Returned | Cancelled | Registered |
+  // Done | Regularized
+  // Registered/Done/Regularized sont reserves aux LeaveType.WorkflowType =
+  // 'Medical' : pas de passage par un ApprovalPool, la demande est
+  // enregistree directement (declaration a posteriori), puis marquee
+  // effectuee et enfin regularisee une fois le justificatif fourni.
   Status              String   @db.NVarChar(25)
   ApprovalPoolId      String?  @db.UniqueIdentifier
   CurrentApprovalStep Int?
@@ -686,6 +735,7 @@ model MissionOrder {
   Status              String   @db.NVarChar(25)
   ApprovalPoolId      String?  @db.UniqueIdentifier
   CurrentApprovalStep Int?
+  RejectionReason     String?  @db.NVarChar(500)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -780,6 +830,7 @@ model EmployeeCategory {
   modifiedByEmployee Employee? @relation("EmployeeCategoryModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   expenseConfigs ExpenseConfig[]
+  employees      Employee[]
 }
 
 /// Catalogue configurable des types de frais. L'admin RH peut ajouter ou

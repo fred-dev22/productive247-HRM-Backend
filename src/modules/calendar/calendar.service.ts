@@ -3,7 +3,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCalendarDto } from './dto/create-calendar.dto';
 import { UpdateCalendarDto } from './dto/update-calendar.dto';
 
-const WORK_DAYS_INCLUDE = { workDays: true } as const;
+const WORK_DAYS_INCLUDE = {
+  workDays: true,
+  createdByEmployee: { select: { FullName: true } },
+  modifiedByEmployee: { select: { FullName: true } },
+} as const;
 
 @Injectable()
 export class CalendarService {

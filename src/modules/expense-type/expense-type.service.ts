@@ -33,6 +33,9 @@ export class ExpenseTypeService {
 
   async remove(id: string) {
     await this.findOne(id);
-    return this.prisma.expenseType.delete({ where: { Id: id } });
+    return this.prisma.expenseType.update({
+      where: { Id: id },
+      data: { IsActive: false },
+    });
   }
 }

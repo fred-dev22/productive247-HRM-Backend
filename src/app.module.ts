@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -18,9 +19,13 @@ import { EmployeeCategoryModule } from './modules/employee-category/employee-cat
 import { ExpenseTypeModule } from './modules/expense-type/expense-type.module';
 import { ExpenseConfigModule } from './modules/expense-config/expense-config.module';
 import { RbacModule } from './modules/rbac/rbac.module';
+import { LeaveRequestModule } from './modules/leave-request/leave-request.module';
+import { LeaveTransactionModule } from './modules/leave-transaction/leave-transaction.module';
+import { MissionOrderModule } from './modules/mission-order/mission-order.module';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
     OrganizationUnitModule,
@@ -38,6 +43,8 @@ import { RbacModule } from './modules/rbac/rbac.module';
     ExpenseTypeModule,
     ExpenseConfigModule,
     RbacModule,
+    LeaveRequestModule,
+    LeaveTransactionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

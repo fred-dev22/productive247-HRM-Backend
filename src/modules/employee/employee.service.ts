@@ -130,6 +130,9 @@ export class EmployeeService {
     });
   }
 
+  // Soft delete : l'employé reste en base (Status=Inactive) — un hard delete
+  // casserait les références historiques (congés, missions, notes de frais
+  // passées) qui pointent vers cet Id.
   async remove(id: string) {
     const existing = await this.findOne(id);
     return this.prisma.$transaction(async (tx) => {
@@ -139,7 +142,10 @@ export class EmployeeService {
           data: { OccupationStatus: 'Vacant' },
         });
       }
-      return tx.employee.delete({ where: { Id: id } });
+      return tx.employee.update({
+        where: { Id: id },
+        data: { Status: 'Inactive', PositionId: null, ModifiedAt: new Date() },
+      });
     });
   }
 }

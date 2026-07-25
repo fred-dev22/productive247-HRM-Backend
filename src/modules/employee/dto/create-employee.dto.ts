@@ -82,6 +82,10 @@ export class CreateEmployeeDto {
   @IsUUID()
   OrganizationUnitId: string;
 
+  @IsOptional()
+  @IsUUID()
+  EmployeeCategoryId?: string;
+
   @IsIn(['Active', 'OnTrial', 'OnLeave', 'Inactive'])
   Status: string;
 }

@@ -4,4 +4,8 @@ export interface JwtPayload {
   sub: string;
   employeeId: string;
   roleName: string;
+  // Fige au moment du login/changement de mot de passe — un changement de
+  // mot de passe re-signe un nouveau token (voir AuthService.changePassword)
+  // plutot que de compter sur le frontend pour ignorer la valeur perimee.
+  mustChangePassword: boolean;
 }

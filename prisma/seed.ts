@@ -48,6 +48,7 @@ const PERMISSIONS: { Code: string; Label: string; Module: string }[] = [
   { Code: 'CONFIG_TYPES_CONGE', Label: 'Configurer les types de congé', Module: 'Configuration' },
   { Code: 'CONFIG_CATEGORIES_EMPLOYE', Label: 'Configurer les catégories employé', Module: 'Configuration' },
   { Code: 'CONFIG_FRAIS_MISSION', Label: 'Configurer les types et configs de frais / mission', Module: 'Configuration' },
+  { Code: 'CONFIG_METIERS_POSTES', Label: 'Configurer les métiers et postes', Module: 'Configuration' },
 
   { Code: 'RAPPORT_VOIR', Label: 'Voir les rapports', Module: 'Rapports' },
   { Code: 'RAPPORT_EXPORTER', Label: 'Exporter les rapports', Module: 'Rapports' },
@@ -65,7 +66,7 @@ const ADMIN_RH_PERMISSIONS = [
   'CONGE_VOIR_TOUT', 'MISSION_VOIR_TOUT', 'FRAIS_VOIR_TOUT',
   'EMPLOYE_VOIR_TOUT', 'EMPLOYE_CREER', 'EMPLOYE_MODIFIER', 'EMPLOYE_DESACTIVER', 'EMPLOYE_COMPTE_CREER',
   'ENTITE_VOIR', 'ENTITE_CREER', 'ENTITE_MODIFIER', 'ENTITE_SOUMETTRE',
-  'CONFIG_CALENDRIER', 'CONFIG_JOURS_FERIES', 'CONFIG_TYPES_CONGE', 'CONFIG_CATEGORIES_EMPLOYE', 'CONFIG_FRAIS_MISSION',
+  'CONFIG_CALENDRIER', 'CONFIG_JOURS_FERIES', 'CONFIG_TYPES_CONGE', 'CONFIG_CATEGORIES_EMPLOYE', 'CONFIG_FRAIS_MISSION', 'CONFIG_METIERS_POSTES',
   'RAPPORT_VOIR', 'RAPPORT_EXPORTER',
 ];
 
@@ -205,10 +206,9 @@ async function main() {
     }
   }
 
-  await prisma.organizationUnit.update({
-    where: { Id: orgUnitId },
-    data: { ManagerId: employeeId },
-  });
+  // Le responsable de l'entite racine n'est PAS force sur l'admin technique —
+  // il doit etre choisi deliberement depuis la fiche entite (le boss n'est
+  // pas forcement le compte qui a lance le seed).
 
   console.log('Seeded first admin account:');
   console.log(`  Email:    ${ADMIN_EMAIL}`);

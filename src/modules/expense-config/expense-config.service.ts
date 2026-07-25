@@ -33,6 +33,9 @@ export class ExpenseConfigService {
 
   async remove(id: string) {
     await this.findOne(id);
-    return this.prisma.expenseConfig.delete({ where: { Id: id } });
+    return this.prisma.expenseConfig.update({
+      where: { Id: id },
+      data: { IsActive: false },
+    });
   }
 }

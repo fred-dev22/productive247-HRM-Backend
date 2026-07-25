@@ -22,6 +22,11 @@ export class CreateOrganizationUnitDto {
   Type: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  LegalIdentifier?: string;
+
+  @IsOptional()
   @IsUUID()
   ParentId?: string;
 
