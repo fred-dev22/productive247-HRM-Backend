@@ -100,7 +100,9 @@ model Position {
   Code               String  @unique @db.NVarChar(20)
   Title              String  @db.NVarChar(150)
   JobId              String  @db.UniqueIdentifier
-  OrganizationUnitId String  @db.UniqueIdentifier
+  // Nullable : un poste n'est plus necessairement rattache a une entite
+  // precise — c'est l'employe qui l'est (Employee.OrganizationUnitId).
+  OrganizationUnitId String? @db.UniqueIdentifier
   ParentPositionId   String? @db.UniqueIdentifier
   // OccupationStatus: Vacant | Occupied — mis a jour automatiquement par le
   // backend quand un employe est affecte ou quitte le poste
@@ -111,8 +113,8 @@ model Position {
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
 
-  job              Job              @relation(fields: [JobId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  organizationUnit OrganizationUnit @relation(fields: [OrganizationUnitId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  job              Job               @relation(fields: [JobId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  organizationUnit OrganizationUnit? @relation(fields: [OrganizationUnitId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   parentPosition       Position?  @relation("PositionHierarchy", fields: [ParentPositionId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   subordinatePositions Position[] @relation("PositionHierarchy")

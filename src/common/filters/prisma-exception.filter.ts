@@ -41,7 +41,16 @@ export function extractConflictingFields(
     constraint?: unknown;
   };
   if (Array.isArray(target)) return target as string[];
-  if (typeof target === 'string') return [target];
+
+  // Le connecteur SQL Server renvoie parfois `target` comme le nom brut de
+  // la contrainte (ex: "Employee_Email_key") plutot que le nom du champ nu —
+  // on tente la meme extraction par convention que sur `constraint.index`
+  // avant de retomber sur la valeur telle quelle.
+  if (typeof target === 'string') {
+    const match = target.match(/^[A-Za-z]+_(.+)_key$/);
+    if (match) return match[1].split('_');
+    return [target];
+  }
 
   if (constraint && typeof constraint === 'object') {
     const index = (constraint as { index?: unknown }).index;

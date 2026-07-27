@@ -21,8 +21,9 @@ export class CreatePositionDto {
   @IsUUID()
   JobId: string;
 
+  @IsOptional()
   @IsUUID()
-  OrganizationUnitId: string;
+  OrganizationUnitId?: string;
 
   @IsOptional()
   @IsUUID()
