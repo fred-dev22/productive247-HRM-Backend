@@ -27,12 +27,24 @@ async function main() {
   const prisma = new PrismaClient({ adapter: new PrismaMssql(process.env.DATABASE_URL as string) });
 
   console.log('Suppression de toutes les données…');
-  // sp_MSforeachtable : desactive les contraintes, vide chaque table, puis
-  // reactive les contraintes — evite d'avoir a lister manuellement l'ordre
-  // de suppression au milieu de toutes les FK du schema.
-  await prisma.$executeRawUnsafe(`EXEC sp_MSforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT ALL"`);
-  await prisma.$executeRawUnsafe(`EXEC sp_MSforeachtable "DELETE FROM ?"`);
-  await prisma.$executeRawUnsafe(`EXEC sp_MSforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT ALL"`);
+  // sp_MSforeachtable est un proc systeme compile avec QUOTED_IDENTIFIER OFF —
+  // ce reglage est fige a la compilation du proc et ignore le SET de notre
+  // session, donc son DELETE echoue des qu'une table a un index filtre (ex.
+  // Employee_UserId_key). On construit donc la liste des tables nous-memes et
+  // on execute chaque DELETE directement, avec QUOTED_IDENTIFIER ON dans le
+  // meme batch que la commande.
+  const tables: { name: string }[] = await prisma.$queryRawUnsafe(
+    `SELECT t.name FROM sys.tables t WHERE t.is_ms_shipped = 0`,
+  );
+  for (const { name } of tables) {
+    await prisma.$executeRawUnsafe(`ALTER TABLE [${name}] NOCHECK CONSTRAINT ALL`);
+  }
+  for (const { name } of tables) {
+    await prisma.$executeRawUnsafe(`SET QUOTED_IDENTIFIER ON; DELETE FROM [${name}]`);
+  }
+  for (const { name } of tables) {
+    await prisma.$executeRawUnsafe(`ALTER TABLE [${name}] WITH CHECK CHECK CONSTRAINT ALL`);
+  }
   await prisma.$disconnect();
   console.log('Base vidée.');
 

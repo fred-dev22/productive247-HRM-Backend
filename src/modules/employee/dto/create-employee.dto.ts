@@ -11,10 +11,12 @@ import {
 } from 'class-validator';
 
 export class CreateEmployeeDto {
+  // Optionnel : genere cote serveur si omis (voir EmployeeService.create) —
+  // le frontend pre-remplit une suggestion mais l'admin peut la modifier.
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(20)
-  EmployeeNumber: string;
+  EmployeeNumber?: string;
 
   @IsString()
   @IsNotEmpty()

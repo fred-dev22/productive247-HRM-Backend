@@ -18,7 +18,7 @@ export class AuthService {
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { Email: dto.email },
-      include: { employee: true, role: true },
+      include: { employee: true, employeeCategory: true },
     });
 
     if (!user || !user.IsActive) {
@@ -45,7 +45,7 @@ export class AuthService {
     const payload: JwtPayload = {
       sub: user.Id,
       employeeId: user.employee.Id,
-      roleName: user.role.Name,
+      categoryName: user.employeeCategory.Name,
       mustChangePassword: user.MustChangePassword,
     };
 
@@ -58,7 +58,7 @@ export class AuthService {
   async changePassword(userId: string, dto: ChangePasswordDto) {
     const user = await this.prisma.user.findUnique({
       where: { Id: userId },
-      include: { employee: true, role: true },
+      include: { employee: true, employeeCategory: true },
     });
     if (!user) {
       throw new UnauthorizedException('Compte introuvable');
@@ -81,7 +81,7 @@ export class AuthService {
     const payload: JwtPayload = {
       sub: user.Id,
       employeeId: user.employee?.Id ?? '',
-      roleName: user.role.Name,
+      categoryName: user.employeeCategory.Name,
       mustChangePassword: false,
     };
     return { accessToken: this.jwtService.sign(payload) };

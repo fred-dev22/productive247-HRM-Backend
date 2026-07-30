@@ -30,23 +30,23 @@ datasource db {
 /// Unite organisationnelle de l'entreprise : Direction, Departement ou Service.
 /// Auto-referencee via ParentId pour modeliser la hierarchie.
 model OrganizationUnit {
-  Id        String  @id @default(uuid()) @db.UniqueIdentifier
-  Code      String  @unique @db.NVarChar(20)
-  Name      String  @db.NVarChar(150)
+  Id              String  @id @default(uuid()) @db.UniqueIdentifier
+  Code            String  @unique @db.NVarChar(20)
+  Name            String  @db.NVarChar(150)
   // Type: Direction | Department | Service
   Type            String  @db.NVarChar(20)
   // Absent du modele PDF — identifiant legal/fiscal local (RCS, NIF...),
   // ajoute a la demande cote UI (ecrans de creation/edition d'entite).
   LegalIdentifier String? @db.NVarChar(50)
-  ParentId  String? @db.UniqueIdentifier
+  ParentId        String? @db.UniqueIdentifier
   // Responsable designe de cette unite. Nullable en pratique : une unite peut
   // exister avant qu'un employe lui soit rattache (bootstrap / transition).
-  ManagerId String? @db.UniqueIdentifier
-  Address   String? @db.NVarChar(255)
-  Phone     String? @db.NVarChar(30)
-  Email     String? @db.NVarChar(150)
+  ManagerId       String? @db.UniqueIdentifier
+  Address         String? @db.NVarChar(255)
+  Phone           String? @db.NVarChar(30)
+  Email           String? @db.NVarChar(150)
   // Status: Draft | PendingApproval | Active | Inactive
-  Status    String  @db.NVarChar(20)
+  Status          String  @db.NVarChar(20)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -78,8 +78,6 @@ model Job {
   Code        String  @unique @db.NVarChar(20)
   Title       String  @db.NVarChar(150)
   Description String? @db.NVarChar(Max)
-  // Category: SeniorExecutive | Manager | Technician | Employee
-  Category    String  @db.NVarChar(30)
   IsActive    Boolean @default(true)
 
   CreatedBy  String    @db.UniqueIdentifier
@@ -104,9 +102,12 @@ model Position {
   // precise — c'est l'employe qui l'est (Employee.OrganizationUnitId).
   OrganizationUnitId String? @db.UniqueIdentifier
   ParentPositionId   String? @db.UniqueIdentifier
-  // OccupationStatus: Vacant | Occupied — mis a jour automatiquement par le
-  // backend quand un employe est affecte ou quitte le poste
-  OccupationStatus   String  @db.NVarChar(10)
+  // Nombre de sieges ouverts sur ce poste (voir decision du 30/07 : un poste
+  // est un "type de poste avec N ouvertures", pas un siege unique) — le
+  // nombre de sieges occupes se deduit en comptant les Employee.PositionId
+  // pointant ici, jamais stocke (evite tout desync, voir position.service.ts
+  // occupiedCount()).
+  Capacity           Int     @default(1)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -170,9 +171,14 @@ model Employee {
 
   // Compte utilisateur de la plateforme AfrikEdge donnant acces au systeme,
   // nullable si l'employe n'a pas de compte. Table locale (hors modele PDF).
-  UserId      String? @unique @db.UniqueIdentifier
+  // NOTE SQL Server : @unique genere ici une UNIQUE CONSTRAINT classique qui
+  // n'autorise qu'UNE SEULE ligne NULL au total (contrairement a Postgres/
+  // MySQL) — cassant des le 2e employe sans compte. seed.ts la remplace par
+  // un index unique FILTRE (WHERE UserId IS NOT NULL) a chaque demarrage —
+  // voir fixEmployeeUserIdUniqueIndex(), a rejouer apres tout `db push`.
+  UserId String? @unique @db.UniqueIdentifier
   // Status: Active | OnTrial | OnLeave | Inactive
-  Status      String  @db.NVarChar(10)
+  Status String  @db.NVarChar(10)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -255,10 +261,9 @@ model Employee {
 
   attachmentsCreated Attachment[] @relation("AttachmentCreatedBy")
 
-  rolesCreated  Role[] @relation("RoleCreatedBy")
-  rolesModified Role[] @relation("RoleModifiedBy")
-
   userPermissionsGranted UserPermission[] @relation("UserPermissionCreatedBy")
+
+  categoryPermissionsGranted CategoryPermission[] @relation("CategoryPermissionCreatedBy")
 
   @@index([PositionId])
   @@index([OrganizationUnitId])
@@ -269,62 +274,42 @@ model Employee {
 /// reference externe), mais requis ici pour porter l'authentification locale
 /// du backend. Un Employee a au plus un User (Employee.UserId, unique).
 model User {
-  Id           String    @id @default(uuid()) @db.UniqueIdentifier
-  Username     String    @unique @db.NVarChar(100)
-  Email        String    @unique @db.NVarChar(150)
-  PasswordHash String    @db.NVarChar(500)
-  IsActive     Boolean   @default(true)
+  Id                 String    @id @default(uuid()) @db.UniqueIdentifier
+  Username           String    @unique @db.NVarChar(100)
+  Email              String    @unique @db.NVarChar(150)
+  PasswordHash       String    @db.NVarChar(500)
+  IsActive           Boolean   @default(true)
   // Force le changement de mot de passe à la prochaine connexion — vrai par
   // défaut (mot de passe temporaire fixé à la création du compte via
   // POST /users), remis à false par PATCH /auth/change-password.
   MustChangePassword Boolean   @default(true)
   LastLoginAt        DateTime? @db.DateTime2
 
-  // Role attribue a l'activation de l'acces systeme (voir Employee.UserId) —
-  // porte le paquet de permissions par defaut, complete/restreint au cas par
-  // cas par UserPermission.
-  RoleId String @db.UniqueIdentifier
+  // Categorie attribuee a l'activation de l'acces systeme (voir
+  // Employee.UserId) — la MEME EmployeeCategory que celle utilisee pour le
+  // perdiem (voir ExpenseConfig). Porte le paquet de permissions par defaut
+  // de la categorie, copie une seule fois dans UserPermission au moment de
+  // la creation du compte (voir UserService.create) : un changement ulterieur
+  // des permissions de la categorie n'affecte JAMAIS retroactivement les
+  // comptes deja crees, seulement les prochains (voir decision du 29/07).
+  // Reste modifiable au cas par cas ensuite (EmployeeCategoryController).
+  EmployeeCategoryId String @db.UniqueIdentifier
 
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedAt DateTime? @db.DateTime2
 
-  employee Employee?
-  role     Role             @relation(fields: [RoleId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  userPermissions UserPermission[]
+  employee         Employee?
+  employeeCategory EmployeeCategory @relation(fields: [EmployeeCategoryId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  userPermissions  UserPermission[]
 
-  @@index([RoleId])
-}
-
-/// Role attribuable a un User — remplace l'ancien Employee.ProfileType (enum
-/// fige). Editable dans l'ecran Administration > Roles : les 4 roles de base
-/// (IsSystem=true) sont proteges contre la suppression, les roles
-/// personnalises peuvent etre crees librement par un HRDirector.
-model Role {
-  Id          String  @id @default(uuid()) @db.UniqueIdentifier
-  Name        String  @unique @db.NVarChar(100)
-  Description String? @db.NVarChar(300)
-  IsSystem    Boolean @default(false)
-
-  CreatedBy  String    @db.UniqueIdentifier
-  CreatedAt  DateTime  @default(now()) @db.DateTime2
-  ModifiedBy String?   @db.UniqueIdentifier
-  ModifiedAt DateTime? @db.DateTime2
-
-  users           User[]
-  rolePermissions RolePermission[]
-
-  createdByEmployee  Employee  @relation("RoleCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  modifiedByEmployee Employee? @relation("RoleModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([CreatedBy])
-  @@index([ModifiedBy])
+  @@index([EmployeeCategoryId])
 }
 
 /// Catalogue fixe des permissions atomiques : chaque Code correspond a un
 /// controle reel applique sur une route backend (@RequirePermissions). Le
 /// catalogue s'enrichit au fur et a mesure qu'on cable chaque module ; il
 /// n'est pas cree librement depuis l'ecran Administration (contrairement aux
-/// roles), seule l'association Role <-> Permission l'est.
+/// categories), seule l'association Categorie <-> Permission l'est.
 model Permission {
   Id     String @id @default(uuid()) @db.UniqueIdentifier
   // ex: "employees.view.team"
@@ -334,32 +319,46 @@ model Permission {
   // regroupement pour l'affichage, ex: "Employes", "Administration"
   Module String @db.NVarChar(50)
 
-  rolePermissions RolePermission[]
-  userPermissions UserPermission[]
+  categoryPermissions CategoryPermission[]
+  userPermissions     UserPermission[]
 }
 
-/// Permissions accordees par defaut a un role.
-model RolePermission {
-  Id           String @id @default(uuid()) @db.UniqueIdentifier
-  RoleId       String @db.UniqueIdentifier
-  PermissionId String @db.UniqueIdentifier
+/// Permissions accordees par defaut a une EmployeeCategory — sert UNIQUEMENT
+/// de gabarit copie dans UserPermission au moment de la creation d'un compte
+/// (voir UserService.create). Modifier cette liste ne touche jamais les
+/// comptes deja crees : c'est le point explicitement demande le 29/07 (le
+/// RH doit pouvoir retirer un droit "pour les prochains" sans craindre de le
+/// retirer sous le pied de quelqu'un qui l'a deja). Voir le bandeau
+/// d'avertissement sur EmployeeCategoriesConfigView.vue cote front.
+model CategoryPermission {
+  Id                 String @id @default(uuid()) @db.UniqueIdentifier
+  EmployeeCategoryId String @db.UniqueIdentifier
+  PermissionId       String @db.UniqueIdentifier
 
-  role       Role       @relation(fields: [RoleId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  permission Permission @relation(fields: [PermissionId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  CreatedBy String   @db.UniqueIdentifier
+  CreatedAt DateTime @default(now()) @db.DateTime2
 
-  @@unique([RoleId, PermissionId])
+  employeeCategory EmployeeCategory @relation(fields: [EmployeeCategoryId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  permission       Permission       @relation(fields: [PermissionId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  createdByEmployee Employee @relation("CategoryPermissionCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([EmployeeCategoryId, PermissionId])
   @@index([PermissionId])
 }
 
-/// Exception individuelle par rapport aux permissions du role : Granted=true
-/// accorde un droit que le role ne donne pas, Granted=false retire un droit
-/// que le role donne normalement. Resolu au login (voir AuthService) et figee
-/// dans le JWT jusqu'a la prochaine connexion.
+/// Permission accordee individuellement a un User — la source UNIQUE de
+/// verite pour ses droits effectifs (voir PermissionGuard : plus aucune
+/// jointure vers une categorie en direct sur ce chemin). Peuplee une premiere
+/// fois par copie du gabarit CategoryPermission a la creation du compte, puis
+/// editable au cas par cas (EMPLOYE_PERMISSION_GERER) independamment de tout
+/// changement ulterieur sur la categorie. Presence de la ligne = accorde ;
+/// suppression = retire (pas de flag IsGranted, plus de "role" sous-jacent
+/// a surcharger).
 model UserPermission {
-  Id           String  @id @default(uuid()) @db.UniqueIdentifier
-  UserId       String  @db.UniqueIdentifier
-  PermissionId String  @db.UniqueIdentifier
-  IsGranted    Boolean
+  Id           String @id @default(uuid()) @db.UniqueIdentifier
+  UserId       String @db.UniqueIdentifier
+  PermissionId String @db.UniqueIdentifier
 
   CreatedBy String   @db.UniqueIdentifier
   CreatedAt DateTime @default(now()) @db.DateTime2
@@ -474,23 +473,23 @@ model ApprovalDecision {
 /// Parametres globaux de l'entreprise. Table singleton : une seule ligne,
 /// jamais inseree une deuxieme fois.
 model CompanySettings {
-  Id                        String  @id @default(uuid()) @db.UniqueIdentifier
-  CompanyName               String  @db.NVarChar(150)
-  Currency                  String  @db.NVarChar(3)
-  Timezone                  String  @db.NVarChar(50)
+  Id                        String    @id @default(uuid()) @db.UniqueIdentifier
+  CompanyName               String    @db.NVarChar(150)
+  Currency                  String    @db.NVarChar(3)
+  Timezone                  String    @db.NVarChar(50)
   // DayCountingRule: WorkingDays | CalendarDays
-  DayCountingRule           String  @db.NVarChar(20)
-  DefaultMonthlyAccrualRate Decimal @db.Decimal(5, 2)
+  DayCountingRule           String    @db.NVarChar(20)
+  DefaultMonthlyAccrualRate Decimal   @db.Decimal(5, 2)
   DefaultCarryOverCap       Int
   // Jour du mois (1-28) ou tourne la generation automatique des acquisitions
   // de conges (LeaveTransaction). Nullable : generation manuelle uniquement
   // tant que l'entreprise n'a pas choisi de jour.
-  LeaveAccrualRunDay     Int?
-  LastLeaveAccrualRunAt  DateTime? @db.DateTime2
+  LeaveAccrualRunDay        Int?
+  LastLeaveAccrualRunAt     DateTime? @db.DateTime2
   // Vrai une fois que l'assistant de configuration initiale (calendrier +
   // structure + equipe) a ete complete par un administrateur — sert de garde
   // au routeur frontend pour ne plus jamais raffiche l'onboarding ensuite.
-  IsOnboarded Boolean @default(false)
+  IsOnboarded               Boolean   @default(false)
 
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
@@ -604,7 +603,7 @@ model EmployeeLeaveBalance {
   Id          String   @id @default(uuid()) @db.UniqueIdentifier
   EmployeeId  String   @db.UniqueIdentifier
   LeaveTypeId String   @db.UniqueIdentifier
-  Balance     Decimal  @db.Decimal(6, 2) @default(0)
+  Balance     Decimal  @default(0) @db.Decimal(6, 2)
   ModifiedAt  DateTime @default(now()) @db.DateTime2
 
   employee  Employee  @relation(fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
@@ -815,8 +814,13 @@ model ExpenseLine {
   @@index([ExpenseTypeId])
 }
 
-/// Classification configurable des employes utilisee dans la matrice
-/// ExpenseConfig pour determiner les taux de frais applicables.
+/// Classification configurable des employes — porte a la fois (1) le taux de
+/// frais applicable via la matrice ExpenseConfig et (2) le paquet de
+/// permissions applique aux comptes utilisateur crees pour un employe de
+/// cette categorie (voir CategoryPermission, User.EmployeeCategoryId).
+/// Remplace l'ancien Role RBAC et l'ancienne JobCategory : une seule notion
+/// de "categorie", modifiable/ajoutable librement par un Directeur RH (voir
+/// decision du 29/07 — "role et categorie c'est la meme chose").
 model EmployeeCategory {
   Id       String  @id @default(uuid()) @db.UniqueIdentifier
   Code     String  @unique @db.NVarChar(20)
@@ -831,8 +835,10 @@ model EmployeeCategory {
   createdByEmployee  Employee  @relation("EmployeeCategoryCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee? @relation("EmployeeCategoryModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
-  expenseConfigs ExpenseConfig[]
-  employees      Employee[]
+  expenseConfigs      ExpenseConfig[]
+  employees           Employee[]
+  users               User[]
+  categoryPermissions CategoryPermission[]
 }
 
 /// Catalogue configurable des types de frais. L'admin RH peut ajouter ou

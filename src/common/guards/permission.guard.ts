@@ -9,11 +9,14 @@ import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from '../../modules/auth/decorators/public.decorator';
 import { PERMISSION_KEY } from '../decorators/require-permission.decorator';
-import { computeEffectivePermissions } from '../permissions/effective-permissions';
 
 // Re-reads permissions from the database on EVERY authenticated request
 // (never from the JWT), so a revoked permission or a deactivated account
 // takes effect immediately, without waiting for the user to log back in.
+// Reads UserPermission directly — no live join to a role/category here: a
+// user's permissions were copied once from their category's template at
+// account creation (see UserService.create) and are independently editable
+// from then on (see decision du 29/07 — la categorie n'est qu'un gabarit).
 // Runs after JwtAuthGuard (see AuthModule providers order), which already
 // populates request.user for non-@Public() routes.
 @Injectable()
@@ -40,20 +43,14 @@ export class PermissionGuard implements CanActivate {
 
     const user = await this.prisma.user.findUnique({
       where: { Id: userId },
-      include: {
-        role: { include: { rolePermissions: { include: { permission: true } } } },
-        userPermissions: { include: { permission: true } },
-      },
+      include: { userPermissions: { include: { permission: true } } },
     });
 
     if (!user || !user.IsActive) {
       throw new UnauthorizedException('Ce compte a été désactivé');
     }
 
-    const effective = computeEffectivePermissions(
-      user.role.rolePermissions.map((rp) => rp.permission.Code),
-      user.userPermissions.map((up) => ({ Code: up.permission.Code, IsGranted: up.IsGranted })),
-    );
+    const effective = new Set(user.userPermissions.map((up) => up.permission.Code));
 
     // Stashed for handlers that need finer-grained (ownership-aware) checks
     // than a single fixed permission code — see @CurrentPermissions().

@@ -184,9 +184,9 @@ export class LeaveRequestService {
     });
   }
 
-  async update(id: string, dto: UpdateLeaveRequestDto, requesterEmployeeId: string) {
+  async update(id: string, dto: UpdateLeaveRequestDto, requesterEmployeeId: string, canActForOthers: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId) {
+    if (existing.EmployeeId !== requesterEmployeeId && !canActForOthers) {
       throw new ForbiddenException("Vous ne pouvez modifier que vos propres demandes");
     }
     if (!EDITABLE_STATUSES.includes(existing.Status)) {
@@ -218,9 +218,9 @@ export class LeaveRequestService {
     });
   }
 
-  async remove(id: string, requesterEmployeeId: string) {
+  async remove(id: string, requesterEmployeeId: string, canActForOthers: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId) {
+    if (existing.EmployeeId !== requesterEmployeeId && !canActForOthers) {
       throw new ForbiddenException("Vous ne pouvez supprimer que vos propres demandes");
     }
     if (existing.Status !== 'Draft') {
@@ -325,9 +325,9 @@ export class LeaveRequestService {
 
   // ── Workflow ─────────────────────────────────────────────────────────
 
-  async submit(id: string, requesterEmployeeId: string) {
+  async submit(id: string, requesterEmployeeId: string, canActForOthers: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId) {
+    if (existing.EmployeeId !== requesterEmployeeId && !canActForOthers) {
       throw new ForbiddenException("Vous ne pouvez soumettre que vos propres demandes");
     }
     if (!EDITABLE_STATUSES.includes(existing.Status)) {

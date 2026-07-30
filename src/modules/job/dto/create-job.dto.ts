@@ -1,6 +1,5 @@
 import {
   IsBoolean,
-  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -21,9 +20,6 @@ export class CreateJobDto {
   @IsOptional()
   @IsString()
   Description?: string;
-
-  @IsIn(['SeniorExecutive', 'Manager', 'Technician', 'Employee'])
-  Category: string;
 
   @IsOptional()
   @IsBoolean()

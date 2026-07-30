@@ -3,9 +3,8 @@ import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { AssignRoleDto } from './dto/assign-role.dto';
+import { AssignCategoryDto } from './dto/assign-category.dto';
 import { SetUserPermissionDto } from './dto/set-user-permission.dto';
-import { computeEffectivePermissions } from '../../common/permissions/effective-permissions';
 
 const SALT_ROUNDS = 10;
 
@@ -20,9 +19,12 @@ export class UserService {
 
   // Active l'accès système d'un employé : crée le User et relie
   // Employee.UserId dans la même transaction (voir Employee.UserId, nullable
-  // — un employé n'a par défaut aucun accès tant que ce n'est pas fait).
+  // — un employé n'a par défaut aucun accès tant que ce n'est pas fait). Les
+  // permissions actuelles de la catégorie choisie (CategoryPermission) sont
+  // copiées une seule fois dans UserPermission — un changement ultérieur de
+  // la catégorie n'affectera jamais ce compte, voir decision du 29/07.
   async create(dto: CreateUserDto) {
-    const { Password, EmployeeId, ...rest } = dto;
+    const { Password, EmployeeId, EmployeeCategoryId, ...rest } = dto;
 
     const employee = await this.prisma.employee.findUnique({ where: { Id: EmployeeId } });
     if (!employee) {
@@ -32,22 +34,44 @@ export class UserService {
       throw new BadRequestException('Cet employé a déjà un compte d\'accès système');
     }
 
+    const category = await this.prisma.employeeCategory.findUnique({
+      where: { Id: EmployeeCategoryId },
+      include: { categoryPermissions: true },
+    });
+    if (!category) {
+      throw new NotFoundException(`Catégorie ${EmployeeCategoryId} introuvable`);
+    }
+
     const PasswordHash = await bcrypt.hash(Password, SALT_ROUNDS);
 
     return this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({ data: { ...rest, PasswordHash } });
+      const user = await tx.user.create({
+        data: { ...rest, EmployeeCategoryId, PasswordHash },
+      });
+      if (category.categoryPermissions.length > 0) {
+        await tx.userPermission.createMany({
+          data: category.categoryPermissions.map((cp) => ({
+            UserId: user.Id,
+            PermissionId: cp.PermissionId,
+            CreatedBy: EmployeeId,
+          })),
+        });
+      }
       await tx.employee.update({ where: { Id: EmployeeId }, data: { UserId: user.Id } });
       return this.sanitize(user);
     });
   }
 
   async findAll() {
-    const users = await this.prisma.user.findMany({ include: { role: true } });
+    const users = await this.prisma.user.findMany({ include: { employeeCategory: true } });
     return users.map((user) => this.sanitize(user));
   }
 
   async findOne(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { Id: id }, include: { role: true } });
+    const user = await this.prisma.user.findUnique({
+      where: { Id: id },
+      include: { employeeCategory: true },
+    });
     if (!user) {
       throw new NotFoundException(`Utilisateur ${id} introuvable`);
     }
@@ -71,15 +95,22 @@ export class UserService {
     return this.sanitize(user);
   }
 
-  async assignRole(id: string, dto: AssignRoleDto) {
+  // Change juste l'étiquette de catégorie du compte — ne touche JAMAIS aux
+  // UserPermission déjà en place (voir decision du 29/07 : le seul moment où
+  // les permissions d'une catégorie sont copiées vers un user, c'est à la
+  // création du compte). Pour ajuster les droits d'un compte existant, voir
+  // grantPermission/revokePermission ci-dessous.
+  async assignCategory(id: string, dto: AssignCategoryDto) {
     await this.findOne(id);
-    const role = await this.prisma.role.findUnique({ where: { Id: dto.RoleId } });
-    if (!role) {
-      throw new NotFoundException(`Rôle ${dto.RoleId} introuvable`);
+    const category = await this.prisma.employeeCategory.findUnique({
+      where: { Id: dto.EmployeeCategoryId },
+    });
+    if (!category) {
+      throw new NotFoundException(`Catégorie ${dto.EmployeeCategoryId} introuvable`);
     }
     const user = await this.prisma.user.update({
       where: { Id: id },
-      data: { RoleId: dto.RoleId, ModifiedAt: new Date() },
+      data: { EmployeeCategoryId: dto.EmployeeCategoryId, ModifiedAt: new Date() },
     });
     return this.sanitize(user);
   }
@@ -88,31 +119,28 @@ export class UserService {
     const user = await this.prisma.user.findUnique({
       where: { Id: id },
       include: {
-        role: { include: { rolePermissions: { include: { permission: true } } } },
+        employeeCategory: true,
         userPermissions: { include: { permission: true } },
       },
     });
     if (!user) {
       throw new NotFoundException(`Utilisateur ${id} introuvable`);
     }
-    const effective = computeEffectivePermissions(
-      user.role.rolePermissions.map((rp) => rp.permission.Code),
-      user.userPermissions.map((up) => ({ Code: up.permission.Code, IsGranted: up.IsGranted })),
-    );
     return {
-      roleName: user.role.Name,
-      permissions: [...effective],
-      individualOverrides: user.userPermissions.map((up) => ({
+      categoryName: user.employeeCategory.Name,
+      permissions: user.userPermissions.map((up) => up.permission.Code),
+      individualGrants: user.userPermissions.map((up) => ({
         permissionId: up.PermissionId,
         code: up.permission.Code,
-        isGranted: up.IsGranted,
+        module: up.permission.Module,
+        label: up.permission.Label,
       })),
     };
   }
 
-  // IsGranted=true (ajout) ou false (retrait explicite) — un enregistrement
-  // dans les deux cas, jamais une simple suppression (voir UserPermission).
-  private async setPermissionOverride(userId: string, dto: SetUserPermissionDto, isGranted: boolean, createdBy: string) {
+  // Présence de la ligne UserPermission = accordé — pas de flag IsGranted,
+  // il n'y a plus de rôle sous-jacent à surcharger (voir schema.prisma).
+  async grantPermission(userId: string, dto: SetUserPermissionDto, createdBy: string) {
     await this.findOne(userId);
     const permission = await this.prisma.permission.findUnique({ where: { Id: dto.PermissionId } });
     if (!permission) {
@@ -120,17 +148,17 @@ export class UserService {
     }
     await this.prisma.userPermission.upsert({
       where: { UserId_PermissionId: { UserId: userId, PermissionId: dto.PermissionId } },
-      update: { IsGranted: isGranted },
-      create: { UserId: userId, PermissionId: dto.PermissionId, IsGranted: isGranted, CreatedBy: createdBy },
+      update: {},
+      create: { UserId: userId, PermissionId: dto.PermissionId, CreatedBy: createdBy },
     });
     return this.getEffectivePermissions(userId);
   }
 
-  grantPermission(userId: string, dto: SetUserPermissionDto, createdBy: string) {
-    return this.setPermissionOverride(userId, dto, true, createdBy);
-  }
-
-  revokePermission(userId: string, permissionId: string, createdBy: string) {
-    return this.setPermissionOverride(userId, { PermissionId: permissionId }, false, createdBy);
+  async revokePermission(userId: string, permissionId: string) {
+    await this.findOne(userId);
+    await this.prisma.userPermission.deleteMany({
+      where: { UserId: userId, PermissionId: permissionId },
+    });
+    return this.getEffectivePermissions(userId);
   }
 }

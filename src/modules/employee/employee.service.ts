@@ -1,28 +1,55 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+
+type TxClient = Prisma.TransactionClient | PrismaService;
 
 @Injectable()
 export class EmployeeService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Assigning an employee to a Position occupies it; the reverse (freeing a
-  // Position) happens on update/remove below whenever the assignment changes.
-  create(dto: CreateEmployeeDto, createdBy: string) {
+  // Matricule genere cote serveur (compte les EmployeeNumber "EMP..." existants,
+  // en ignorant les autres prefixes eventuels comme les comptes de seed) —
+  // evite les collisions du generateur cote frontend (qui se basait sur la
+  // liste d'employes deja chargee en memoire, potentiellement incomplete).
+  // Reste une suggestion : le champ est pre-rempli mais modifiable, la
+  // contrainte @unique + le filtre Prisma font foi en dernier recours.
+  async generateEmployeeNumber(): Promise<string> {
+    const count = await this.prisma.employee.count({
+      where: { EmployeeNumber: { startsWith: 'EMP' } },
+    });
+    return `EMP${String(count + 1).padStart(3, '0')}`;
+  }
+
+  // L'occupation d'un poste (Vacant/Occupé) n'est plus stockee — un poste a
+  // desormais une Capacity (N sieges), recomptee ici a chaque affectation
+  // pour empecher de depasser le nombre de places disponibles (voir decision
+  // du 30/07). Le frontend filtre deja les postes complets de la liste, ceci
+  // est le filet de securite cote serveur.
+  private async assertPositionHasCapacity(tx: TxClient, positionId: string) {
+    const position = await tx.position.findUnique({
+      where: { Id: positionId },
+      include: { _count: { select: { employees: true } } },
+    });
+    if (!position) {
+      throw new NotFoundException(`Poste ${positionId} introuvable`);
+    }
+    if (position._count.employees >= position.Capacity) {
+      throw new BadRequestException(`Le poste « ${position.Title} » n'a plus de siège disponible`);
+    }
+  }
+
+  async create(dto: CreateEmployeeDto, createdBy: string) {
+    const employeeNumber = dto.EmployeeNumber?.trim() || (await this.generateEmployeeNumber());
     return this.prisma.$transaction(async (tx) => {
-      const employee = await tx.employee.create({
-        data: { ...dto, FullName: `${dto.FirstName} ${dto.LastName}`, CreatedBy: createdBy },
-      });
-
       if (dto.PositionId) {
-        await tx.position.update({
-          where: { Id: dto.PositionId },
-          data: { OccupationStatus: 'Occupied' },
-        });
+        await this.assertPositionHasCapacity(tx, dto.PositionId);
       }
-
-      return employee;
+      return tx.employee.create({
+        data: { ...dto, EmployeeNumber: employeeNumber, FullName: `${dto.FirstName} ${dto.LastName}`, CreatedBy: createdBy },
+      });
     });
   }
 
@@ -107,7 +134,10 @@ export class EmployeeService {
     const positionChanged = positionFieldSent && newPositionId !== oldPositionId;
 
     return this.prisma.$transaction(async (tx) => {
-      const employee = await tx.employee.update({
+      if (positionChanged && newPositionId) {
+        await this.assertPositionHasCapacity(tx, newPositionId);
+      }
+      return tx.employee.update({
         where: { Id: id },
         data: {
           ...dto,
@@ -116,17 +146,6 @@ export class EmployeeService {
           ModifiedAt: new Date(),
         },
       });
-
-      if (positionChanged) {
-        if (oldPositionId) {
-          await tx.position.update({ where: { Id: oldPositionId }, data: { OccupationStatus: 'Vacant' } });
-        }
-        if (newPositionId) {
-          await tx.position.update({ where: { Id: newPositionId }, data: { OccupationStatus: 'Occupied' } });
-        }
-      }
-
-      return employee;
     });
   }
 
@@ -134,18 +153,10 @@ export class EmployeeService {
   // casserait les références historiques (congés, missions, notes de frais
   // passées) qui pointent vers cet Id.
   async remove(id: string) {
-    const existing = await this.findOne(id);
-    return this.prisma.$transaction(async (tx) => {
-      if (existing.PositionId) {
-        await tx.position.update({
-          where: { Id: existing.PositionId },
-          data: { OccupationStatus: 'Vacant' },
-        });
-      }
-      return tx.employee.update({
-        where: { Id: id },
-        data: { Status: 'Inactive', PositionId: null, ModifiedAt: new Date() },
-      });
+    await this.findOne(id);
+    return this.prisma.employee.update({
+      where: { Id: id },
+      data: { Status: 'Inactive', PositionId: null, ModifiedAt: new Date() },
     });
   }
 }

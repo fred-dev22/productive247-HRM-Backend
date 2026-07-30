@@ -7,36 +7,63 @@ import { UpdatePositionDto } from './dto/update-position.dto';
 export class PositionService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(dto: CreatePositionDto, createdBy: string) {
-    return this.prisma.position.create({ data: { ...dto, CreatedBy: createdBy } });
+  // occupiedCount jamais stocke — toujours recompte depuis Employee.PositionId
+  // (voir schema.prisma) pour eviter tout desync avec les affectations reelles.
+  private withOccupiedCount() {
+    return { include: { _count: { select: { employees: true } } } } as const;
   }
 
-  findAll() {
-    return this.prisma.position.findMany();
+  private mapCount<T extends { _count: { employees: number } }>(position: T) {
+    const { _count, ...rest } = position;
+    return { ...rest, OccupiedCount: _count.employees };
   }
 
-  findByUnit(organizationUnitId: string) {
-    return this.prisma.position.findMany({ where: { OrganizationUnitId: organizationUnitId } });
+  async create(dto: CreatePositionDto, createdBy: string) {
+    const position = await this.prisma.position.create({
+      data: { ...dto, CreatedBy: createdBy },
+      ...this.withOccupiedCount(),
+    });
+    return this.mapCount(position);
   }
 
-  findVacant() {
-    return this.prisma.position.findMany({ where: { OccupationStatus: 'Vacant' } });
+  async findAll() {
+    const positions = await this.prisma.position.findMany(this.withOccupiedCount());
+    return positions.map((p) => this.mapCount(p));
+  }
+
+  async findByUnit(organizationUnitId: string) {
+    const positions = await this.prisma.position.findMany({
+      where: { OrganizationUnitId: organizationUnitId },
+      ...this.withOccupiedCount(),
+    });
+    return positions.map((p) => this.mapCount(p));
+  }
+
+  // Postes ayant encore au moins un siege libre (Capacity > sieges occupes).
+  async findAvailable() {
+    const all = await this.findAll();
+    return all.filter((p) => p.OccupiedCount < p.Capacity);
   }
 
   async findOne(id: string) {
-    const position = await this.prisma.position.findUnique({ where: { Id: id } });
+    const position = await this.prisma.position.findUnique({
+      where: { Id: id },
+      ...this.withOccupiedCount(),
+    });
     if (!position) {
       throw new NotFoundException(`Poste ${id} introuvable`);
     }
-    return position;
+    return this.mapCount(position);
   }
 
   async update(id: string, dto: UpdatePositionDto, modifiedBy: string) {
     await this.findOne(id);
-    return this.prisma.position.update({
+    const position = await this.prisma.position.update({
       where: { Id: id },
       data: { ...dto, ModifiedBy: modifiedBy, ModifiedAt: new Date() },
+      ...this.withOccupiedCount(),
     });
+    return this.mapCount(position);
   }
 
   async remove(id: string) {

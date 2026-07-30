@@ -10,6 +10,7 @@ import {
 import { EmployeeCategoryService } from './employee-category.service';
 import { CreateEmployeeCategoryDto } from './dto/create-employee-category.dto';
 import { UpdateEmployeeCategoryDto } from './dto/update-employee-category.dto';
+import { AddCategoryPermissionDto } from './dto/add-category-permission.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 
@@ -47,5 +48,24 @@ export class EmployeeCategoryController {
   @RequirePermission('CONFIG_CATEGORIES_EMPLOYE')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
+  }
+
+  // Qui peut donner tel droit à toute une catégorie est plus sensible que la
+  // simple gestion Code/Libellé — permission dédiée (voir prisma/seed.ts,
+  // uniquement Directeur RH par défaut).
+  @Post(':id/permissions')
+  @RequirePermission('CATEGORIE_GERER')
+  addPermission(
+    @Param('id') id: string,
+    @Body() dto: AddCategoryPermissionDto,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
+    return this.service.addPermission(id, dto, employeeId);
+  }
+
+  @Delete(':id/permissions/:permissionId')
+  @RequirePermission('CATEGORIE_GERER')
+  removePermission(@Param('id') id: string, @Param('permissionId') permissionId: string) {
+    return this.service.removePermission(id, permissionId);
   }
 }

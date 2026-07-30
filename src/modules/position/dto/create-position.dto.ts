@@ -1,9 +1,10 @@
 import {
-  IsIn,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
+  Min,
   MaxLength,
 } from 'class-validator';
 
@@ -29,6 +30,8 @@ export class CreatePositionDto {
   @IsUUID()
   ParentPositionId?: string;
 
-  @IsIn(['Vacant', 'Occupied'])
-  OccupationStatus: string;
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  Capacity?: number;
 }

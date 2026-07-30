@@ -11,7 +11,7 @@ import {
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { AssignRoleDto } from './dto/assign-role.dto';
+import { AssignCategoryDto } from './dto/assign-category.dto';
 import { SetUserPermissionDto } from './dto/set-user-permission.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -51,10 +51,10 @@ export class UserController {
     return this.service.remove(id);
   }
 
-  @Post(':id/role')
+  @Post(':id/category')
   @RequirePermission('EMPLOYE_PERMISSION_GERER')
-  assignRole(@Param('id') id: string, @Body() dto: AssignRoleDto) {
-    return this.service.assignRole(id, dto);
+  assignCategory(@Param('id') id: string, @Body() dto: AssignCategoryDto) {
+    return this.service.assignCategory(id, dto);
   }
 
   // Pas de permission dédiée pour lire SES PROPRES permissions effectives —
@@ -84,11 +84,7 @@ export class UserController {
 
   @Delete(':id/permissions/:permissionId')
   @RequirePermission('EMPLOYE_PERMISSION_GERER')
-  revokePermission(
-    @Param('id') id: string,
-    @Param('permissionId') permissionId: string,
-    @CurrentUser('employeeId') employeeId: string,
-  ) {
-    return this.service.revokePermission(id, permissionId, employeeId);
+  revokePermission(@Param('id') id: string, @Param('permissionId') permissionId: string) {
+    return this.service.revokePermission(id, permissionId);
   }
 }

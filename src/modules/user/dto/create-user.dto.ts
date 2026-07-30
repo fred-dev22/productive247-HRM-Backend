@@ -36,7 +36,11 @@ export class CreateUserDto {
   @IsNotEmpty()
   EmployeeId: string;
 
+  // La catégorie du compte — ses permissions actuelles (CategoryPermission)
+  // sont copiées une seule fois dans UserPermission à la création (voir
+  // UserService.create). Pas forcément la même que Employee.EmployeeCategoryId
+  // (l'admin RH peut la corriger au cas par cas à cet instant).
   @IsUUID()
   @IsNotEmpty()
-  RoleId: string;
+  EmployeeCategoryId: string;
 }

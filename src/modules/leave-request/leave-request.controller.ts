@@ -54,18 +54,27 @@ export class LeaveRequestController {
     @Param('id') id: string,
     @Body() dto: UpdateLeaveRequestDto,
     @CurrentUser('employeeId') employeeId: string,
+    @CurrentPermissions() permissions: Set<string>,
   ) {
-    return this.service.update(id, dto, employeeId);
+    return this.service.update(id, dto, employeeId, permissions.has('CONGE_VOIR_TOUT'));
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
-    return this.service.remove(id, employeeId);
+  remove(
+    @Param('id') id: string,
+    @CurrentUser('employeeId') employeeId: string,
+    @CurrentPermissions() permissions: Set<string>,
+  ) {
+    return this.service.remove(id, employeeId, permissions.has('CONGE_VOIR_TOUT'));
   }
 
   @Post(':id/submit')
-  submit(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
-    return this.service.submit(id, employeeId);
+  submit(
+    @Param('id') id: string,
+    @CurrentUser('employeeId') employeeId: string,
+    @CurrentPermissions() permissions: Set<string>,
+  ) {
+    return this.service.submit(id, employeeId, permissions.has('CONGE_VOIR_TOUT'));
   }
 
   @Patch(':id/approve')

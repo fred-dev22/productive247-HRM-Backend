@@ -26,9 +26,9 @@ export class PositionController {
     return this.service.findAll();
   }
 
-  @Get('vacant')
-  findVacant() {
-    return this.service.findVacant();
+  @Get('available')
+  findAvailable() {
+    return this.service.findAvailable();
   }
 
   @Get('by-unit/:unitId')

@@ -1,7 +1,7 @@
 import { IsNotEmpty, IsUUID } from 'class-validator';
 
-export class AddRolePermissionDto {
+export class AssignCategoryDto {
   @IsUUID()
   @IsNotEmpty()
-  PermissionId: string;
+  EmployeeCategoryId: string;
 }

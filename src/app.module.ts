@@ -45,6 +45,7 @@ import { MissionOrderModule } from './modules/mission-order/mission-order.module
     RbacModule,
     LeaveRequestModule,
     LeaveTransactionModule,
+    MissionOrderModule,
   ],
   controllers: [AppController],
   providers: [AppService],

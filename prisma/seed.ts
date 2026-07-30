@@ -11,8 +11,8 @@ const prisma = new PrismaClient({
 const ADMIN_EMAIL = 'admin@galana.com';
 const ADMIN_PASSWORD = 'Admin@2026!';
 
-// Catalogue fixe des 27 permissions — jamais modifiable depuis l'UI, seule
-// l'association Role <-> Permission l'est (ecran Administration > Roles).
+// Catalogue fixe des permissions — jamais modifiable depuis l'UI, seule
+// l'association Categorie <-> Permission l'est (ecran Configuration > Catégories).
 const PERMISSIONS: { Code: string; Label: string; Module: string }[] = [
   { Code: 'CONGE_VOIR_EQUIPE', Label: "Voir les demandes de congé de son équipe", Module: 'Congés' },
   { Code: 'CONGE_VOIR_TOUT', Label: 'Voir toutes les demandes de congé', Module: 'Congés' },
@@ -41,7 +41,7 @@ const PERMISSIONS: { Code: string; Label: string; Module: string }[] = [
   { Code: 'ENTITE_APPROUVER', Label: 'Approuver / rejeter une entité', Module: 'Entités' },
   { Code: 'ENTITE_DESACTIVER', Label: 'Désactiver une entité', Module: 'Entités' },
 
-  { Code: 'ROLE_GERER', Label: 'Gérer les rôles et leurs permissions', Module: 'Administration' },
+  { Code: 'CATEGORIE_GERER', Label: 'Gérer les catégories et leurs permissions', Module: 'Administration' },
 
   { Code: 'CONFIG_CALENDRIER', Label: 'Configurer le calendrier', Module: 'Configuration' },
   { Code: 'CONFIG_JOURS_FERIES', Label: 'Configurer les jours fériés', Module: 'Configuration' },
@@ -73,20 +73,54 @@ const ADMIN_RH_PERMISSIONS = [
 const DIRECTEUR_RH_PERMISSIONS = [
   ...ADMIN_RH_PERMISSIONS,
   'ENTITE_APPROUVER', 'ENTITE_DESACTIVER',
-  'EMPLOYE_PERMISSION_GERER', 'ROLE_GERER',
+  'EMPLOYE_PERMISSION_GERER', 'CATEGORIE_GERER',
 ];
 
-const ROLES: { Name: string; Description: string; Permissions: string[] }[] = [
-  { Name: 'Employé', Description: "Accès de base — ses propres données uniquement", Permissions: [] },
-  { Name: 'Validateur', Description: "Valide les demandes de son équipe", Permissions: VALIDATEUR_PERMISSIONS },
-  { Name: 'Admin RH', Description: 'Gestion RH courante', Permissions: ADMIN_RH_PERMISSIONS },
-  { Name: 'Directeur RH', Description: 'Accès complet, y compris administration des rôles', Permissions: DIRECTEUR_RH_PERMISSIONS },
+// Catalogue configurable des categories d'employe (voir decision du 29/07 :
+// "role et categorie c'est la meme chose" — une seule table qui porte a la
+// fois le taux de frais/perdiem (ExpenseConfig) ET le paquet de permissions
+// copie au user cree pour un employe de cette categorie). Librement
+// modifiable/ajoutable ensuite depuis l'ecran Configuration > Classification —
+// ceci n'est qu'un point de depart : les 4 memes paliers que l'ancien systeme
+// de roles mock cote front (employee/validator/hr_admin/hr_director, voir
+// decision du 29/07).
+const CATEGORIES: { Code: string; Name: string; Permissions: string[] }[] = [
+  { Code: 'EMPLOYE', Name: 'Employé', Permissions: [] },
+  { Code: 'MANAGER', Name: 'Manager', Permissions: VALIDATEUR_PERMISSIONS },
+  { Code: 'ADMIN-RH', Name: 'Admin RH', Permissions: ADMIN_RH_PERMISSIONS },
+  { Code: 'DIRECTEUR-RH', Name: 'Directeur RH', Permissions: DIRECTEUR_RH_PERMISSIONS },
 ];
+
+// `Employee.UserId String? @unique` genere par `prisma db push` sur SQL
+// Server une UNIQUE CONSTRAINT classique (non filtree) — contrairement a
+// Postgres/MySQL, SQL Server n'autorise alors qu'UNE SEULE ligne NULL au
+// total sur toute la colonne. Resultat : creer un 2e employe sans compte
+// utilisateur (UserId=NULL, le cas normal avant "Creer un compte") declenche
+// un faux conflit "Cette valeur est deja utilisee" des le 2e employe sans
+// compte. On remplace la contrainte par un INDEX UNIQUE FILTRE (autorise
+// plusieurs NULL, empeche toujours deux employes de partager le meme compte)
+// — a refaire a chaque `db push`, qui regenere sinon la contrainte naive.
+async function fixEmployeeUserIdUniqueIndex() {
+  const [existing] = await prisma.$queryRawUnsafe<{ has_filter: boolean }[]>(`
+    SELECT i.has_filter
+    FROM sys.indexes i
+    JOIN sys.tables t ON t.object_id = i.object_id
+    WHERE t.name = 'Employee' AND i.name = 'Employee_UserId_key'
+  `);
+  if (!existing || existing.has_filter) return;
+  await prisma.$executeRawUnsafe(`ALTER TABLE Employee DROP CONSTRAINT Employee_UserId_key`);
+  await prisma.$executeRawUnsafe(
+    `CREATE UNIQUE NONCLUSTERED INDEX Employee_UserId_key ON Employee(UserId) WHERE UserId IS NOT NULL`,
+  );
+  console.log('Index Employee.UserId converti en index unique filtré (plusieurs NULL autorisés).');
+}
 
 async function main() {
-  const existingRole = await prisma.role.findFirst();
-  if (existingRole) {
-    console.log('Des rôles existent déjà — seed ignoré.');
+  await fixEmployeeUserIdUniqueIndex();
+
+  const existingCategory = await prisma.employeeCategory.findFirst();
+  if (existingCategory) {
+    console.log('Des catégories existent déjà — seed ignoré.');
     return;
   }
 
@@ -107,38 +141,49 @@ async function main() {
   console.log(`Seeded ${PERMISSIONS.length} permissions.`);
 
   if (existingAdminEmployee) {
-    // Un employe admin existe deja (base anterieure au RBAC) mais aucun role
-    // n'existe encore : on cree les 4 roles + on relie le compte existant au
-    // role Directeur RH, sans repasser par le bootstrap OrganizationUnit ci-dessous.
-    const directeurRhId = await seedRoles(existingAdminEmployee.Id, permissionByCode);
+    // Un employe admin existe deja (base anterieure a cette migration) mais
+    // aucune categorie n'existe encore : on cree les 4 categories + on relie
+    // le compte existant a Directeur RH, avec une copie de ses permissions
+    // (voir UserService.create — ici on le refait a la main, ce chemin ne
+    // passe pas par ce service), sans repasser par le bootstrap OrganizationUnit ci-dessous.
+    const categoryIdByName = await seedCategories(existingAdminEmployee.Id, permissionByCode);
+    const directeurRhId = categoryIdByName.get('Directeur RH') as string;
     if (existingAdminEmployee.UserId) {
       await prisma.user.update({
         where: { Id: existingAdminEmployee.UserId },
-        data: { RoleId: directeurRhId },
+        data: { EmployeeCategoryId: directeurRhId },
       });
-      console.log(`Compte ${ADMIN_EMAIL} relié au rôle Directeur RH.`);
+      await snapshotCategoryPermissions(
+        existingAdminEmployee.UserId,
+        directeurRhId,
+        existingAdminEmployee.Id,
+      );
+      console.log(`Compte ${ADMIN_EMAIL} relié à la catégorie Directeur RH.`);
     }
     return;
   }
 
-  // ── Aucun employe admin : bootstrap complet (roles + org + employe + user) ──
+  // ── Aucun employe admin : bootstrap complet (categories + org + employe + user) ──
   const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
   const employeeId = randomUUID();
   const orgUnitId = randomUUID();
 
-  // Both OrganizationUnit.CreatedBy and Role.CreatedBy are required FKs to
-  // Employee, but the very first Employee cannot exist before its own
-  // OrganizationUnit (and the roles created for it) do — a genuine bootstrap
-  // cycle. Temporarily disable both FK constraints for the inserts below,
-  // then re-enable (and re-validate) them once every row exists. Employee.
-  // CreatedBy itself is self-referencing and needs no such workaround: SQL
-  // Server validates a self-FK against the row being inserted in the same
-  // statement.
+  // OrganizationUnit.CreatedBy, EmployeeCategory.CreatedBy et
+  // CategoryPermission.CreatedBy sont des FK requises vers Employee, mais le
+  // tout premier Employee ne peut pas exister avant sa propre
+  // OrganizationUnit (ni les categories creees pour lui) — un vrai cycle de
+  // bootstrap. Desactive temporairement ces contraintes FK pour les inserts
+  // ci-dessous, puis les reactive (et revalide) une fois chaque ligne en
+  // place. Employee.CreatedBy lui-meme est auto-referencee et n'a besoin
+  // d'aucun contournement : SQL Server valide une FK auto-referencee contre
+  // la ligne en cours d'insertion dans la meme instruction.
   const fks = await prisma.$queryRaw<{ table_name: string; fk_name: string }[]>`
     SELECT OBJECT_NAME(fk.parent_object_id) AS table_name, fk.name AS fk_name
     FROM sys.foreign_keys fk
     WHERE fk.referenced_object_id = OBJECT_ID('dbo.Employee')
-      AND fk.parent_object_id IN (OBJECT_ID('dbo.OrganizationUnit'), OBJECT_ID('dbo.Role'))
+      AND fk.parent_object_id IN (
+        OBJECT_ID('dbo.OrganizationUnit'), OBJECT_ID('dbo.EmployeeCategory'), OBJECT_ID('dbo.CategoryPermission')
+      )
       AND EXISTS (
         SELECT 1 FROM sys.foreign_key_columns fkc
         JOIN sys.columns c
@@ -153,9 +198,10 @@ async function main() {
     );
   }
 
-  let directeurRhId = '';
+  let categoryIdByName = new Map<string, string>();
   try {
-    directeurRhId = await seedRoles(employeeId, permissionByCode);
+    categoryIdByName = await seedCategories(employeeId, permissionByCode);
+    const directeurRhId = categoryIdByName.get('Directeur RH') as string;
 
     await prisma.organizationUnit.create({
       data: {
@@ -174,7 +220,7 @@ async function main() {
         Email: ADMIN_EMAIL,
         PasswordHash: passwordHash,
         IsActive: true,
-        RoleId: directeurRhId,
+        EmployeeCategoryId: directeurRhId,
       },
     });
 
@@ -198,6 +244,8 @@ async function main() {
         CreatedBy: employeeId,
       },
     });
+
+    await snapshotCategoryPermissions(user.Id, directeurRhId, employeeId);
   } finally {
     for (const fk of fks) {
       await prisma.$executeRawUnsafe(
@@ -215,31 +263,45 @@ async function main() {
   console.log(`  Password: ${ADMIN_PASSWORD}`);
 }
 
-// Cree les 4 roles systeme + leurs RolePermission, retourne l'Id du role
-// Directeur RH (utilise pour relier le compte admin).
-async function seedRoles(createdBy: string, permissionByCode: Map<string, string>): Promise<string> {
-  let directeurRhId = '';
-  for (const r of ROLES) {
-    const role = await prisma.role.create({
-      data: {
-        Name: r.Name,
-        Description: r.Description,
-        IsSystem: true,
-        CreatedBy: createdBy,
-      },
+// Cree les categories + leurs CategoryPermission, retourne la table Nom -> Id
+// (utilisee pour relier le compte admin a Directeur RH ci-dessus).
+async function seedCategories(createdBy: string, permissionByCode: Map<string, string>): Promise<Map<string, string>> {
+  const categoryIdByName = new Map<string, string>();
+  for (const c of CATEGORIES) {
+    const category = await prisma.employeeCategory.create({
+      data: { Code: c.Code, Name: c.Name, CreatedBy: createdBy },
     });
-    if (r.Permissions.length > 0) {
-      await prisma.rolePermission.createMany({
-        data: r.Permissions.map((code) => ({
-          RoleId: role.Id,
+    if (c.Permissions.length > 0) {
+      await prisma.categoryPermission.createMany({
+        data: c.Permissions.map((code) => ({
+          EmployeeCategoryId: category.Id,
           PermissionId: permissionByCode.get(code) as string,
+          CreatedBy: createdBy,
         })),
       });
     }
-    if (r.Name === 'Directeur RH') directeurRhId = role.Id;
+    categoryIdByName.set(c.Name, category.Id);
   }
-  console.log(`Seeded ${ROLES.length} rôles système.`);
-  return directeurRhId;
+  console.log(`Seeded ${CATEGORIES.length} catégories.`);
+  return categoryIdByName;
+}
+
+// Copie les permissions actuelles d'une categorie vers un user — le meme
+// geste que UserService.create() fait pour toute creation de compte via
+// l'API, ici refait a la main car le seed insere directement en base (voir
+// decision du 29/07 : une seule copie, jamais re-synchronisee ensuite).
+async function snapshotCategoryPermissions(userId: string, categoryId: string, createdBy: string) {
+  const categoryPermissions = await prisma.categoryPermission.findMany({
+    where: { EmployeeCategoryId: categoryId },
+  });
+  if (categoryPermissions.length === 0) return;
+  await prisma.userPermission.createMany({
+    data: categoryPermissions.map((cp) => ({
+      UserId: userId,
+      PermissionId: cp.PermissionId,
+      CreatedBy: createdBy,
+    })),
+  });
 }
 
 main()

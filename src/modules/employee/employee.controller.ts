@@ -30,12 +30,18 @@ export class EmployeeController {
     return this.service.findAll();
   }
 
-  // Doit être déclaré avant ':id' — sinon Nest matcherait GET /employees/team
-  // comme findOne('team').
+  // Doivent être déclarées avant ':id' — sinon Nest matcherait GET
+  // /employees/team ou /employees/next-number comme findOne('team'/...).
   @Get('team')
   @RequirePermission('EMPLOYE_VOIR_EQUIPE')
   findTeam(@CurrentUser('employeeId') employeeId: string) {
     return this.service.findTeam(employeeId);
+  }
+
+  @Get('next-number')
+  @RequirePermission('EMPLOYE_CREER')
+  async nextNumber() {
+    return { EmployeeNumber: await this.service.generateEmployeeNumber() };
   }
 
   @Get(':id')
