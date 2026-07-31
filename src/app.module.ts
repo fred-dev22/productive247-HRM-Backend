@@ -22,6 +22,7 @@ import { RbacModule } from './modules/rbac/rbac.module';
 import { LeaveRequestModule } from './modules/leave-request/leave-request.module';
 import { LeaveTransactionModule } from './modules/leave-transaction/leave-transaction.module';
 import { MissionOrderModule } from './modules/mission-order/mission-order.module';
+import { ExpenseReportModule } from './modules/expense-report/expense-report.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { MissionOrderModule } from './modules/mission-order/mission-order.module
     LeaveRequestModule,
     LeaveTransactionModule,
     MissionOrderModule,
+    ExpenseReportModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -167,5 +167,17 @@ export class LeaveTransactionService {
     await this.prisma.companySettings.updateMany({ data: { LastLeaveAccrualRunAt: now } });
     this.logger.log(`${SYSTEM_ACTOR_LABEL} : ${created} crédit(s) appliqué(s)`);
     return { created, runAt: now };
+  }
+
+  // Credit ponctuel et manuel (ex: regularisation, geste commercial, oubli
+  // de generation) — distinct de generateAccruals qui ne fait que la routine
+  // mensuelle/annuelle standard. Passe par adjustBalance, donc trace lui
+  // aussi dans LeaveTransaction pour l'audit.
+  async creditManual(employeeId: string, leaveTypeId: string, amount: number, reason: string | undefined, actorId: string) {
+    if (amount <= 0) {
+      throw new BadRequestException('Le nombre de jours à créditer doit être positif.');
+    }
+    await this.adjustBalance(employeeId, leaveTypeId, amount, 'Acquisition', actorId, undefined, this.prisma);
+    return this.getBalances(employeeId);
   }
 }

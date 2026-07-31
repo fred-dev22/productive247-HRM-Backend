@@ -398,9 +398,10 @@ model ApprovalPool {
   createdByEmployee  Employee  @relation("ApprovalPoolCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee? @relation("ApprovalPoolModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
-  members       ApprovalPoolMember[]
-  leaveRequests LeaveRequest[]
-  missionOrders MissionOrder[]
+  members        ApprovalPoolMember[]
+  leaveRequests  LeaveRequest[]
+  missionOrders  MissionOrder[]
+  expenseReports ExpenseReport[]
 
   @@index([OrganizationUnitId])
 }
@@ -758,17 +759,20 @@ model MissionOrder {
 /// Conteneur des depenses apres une mission. Peut etre lie a une
 /// MissionOrder ou soumis de facon autonome.
 model ExpenseReport {
-  Id              String    @id @default(uuid()) @db.UniqueIdentifier
-  ReferenceCode   String    @unique @db.NVarChar(20)
-  MissionOrderId  String?   @db.UniqueIdentifier
-  EmployeeId      String    @db.UniqueIdentifier
-  Title           String    @db.NVarChar(150)
-  Currency        String    @db.NVarChar(3)
-  // Status: Draft | Pending | Approved | Rejected | Reimbursed
-  Status          String    @db.NVarChar(20)
-  RejectionReason String?   @db.NVarChar(500)
-  SubmittedAt     DateTime? @db.DateTime2
-  ReimbursedAt    DateTime? @db.DateTime2
+  Id                  String    @id @default(uuid()) @db.UniqueIdentifier
+  ReferenceCode       String    @unique @db.NVarChar(20)
+  MissionOrderId      String?   @db.UniqueIdentifier
+  EmployeeId          String    @db.UniqueIdentifier
+  Title               String    @db.NVarChar(150)
+  Currency            String    @db.NVarChar(3)
+  // Status: Draft | InApprovalN1..N4 | Approved | Rejected | Returned |
+  // Cancelled | Reimbursed
+  Status              String    @db.NVarChar(20)
+  ApprovalPoolId      String?   @db.UniqueIdentifier
+  CurrentApprovalStep Int?
+  RejectionReason     String?   @db.NVarChar(500)
+  SubmittedAt         DateTime? @db.DateTime2
+  ReimbursedAt        DateTime? @db.DateTime2
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -777,6 +781,7 @@ model ExpenseReport {
 
   missionOrder MissionOrder? @relation(fields: [MissionOrderId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   employee     Employee      @relation("ExpenseReportEmployee", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  approvalPool ApprovalPool? @relation(fields: [ApprovalPoolId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   createdByEmployee  Employee  @relation("ExpenseReportCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee? @relation("ExpenseReportModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
@@ -785,6 +790,7 @@ model ExpenseReport {
 
   @@index([MissionOrderId])
   @@index([EmployeeId])
+  @@index([ApprovalPoolId])
 }
 
 /// Ligne de depense individuelle d'une note de frais. Les totaux sont

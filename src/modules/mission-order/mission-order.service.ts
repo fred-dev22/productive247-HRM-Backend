@@ -199,9 +199,9 @@ export class MissionOrderService {
     });
   }
 
-  async update(id: string, dto: UpdateMissionOrderDto, requesterEmployeeId: string) {
+  async update(id: string, dto: UpdateMissionOrderDto, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId) {
+    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez modifier que vos propres ordres de mission");
     }
     if (!EDITABLE_STATUSES.includes(existing.Status)) {
@@ -231,9 +231,9 @@ export class MissionOrderService {
     });
   }
 
-  async remove(id: string, requesterEmployeeId: string) {
+  async remove(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId) {
+    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez supprimer que vos propres ordres de mission");
     }
     if (existing.Status !== 'Draft') {
@@ -333,9 +333,9 @@ export class MissionOrderService {
 
   // ── Workflow ─────────────────────────────────────────────────────────
 
-  async submit(id: string, requesterEmployeeId: string) {
+  async submit(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId) {
+    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez soumettre que vos propres ordres de mission");
     }
     if (!EDITABLE_STATUSES.includes(existing.Status)) {
