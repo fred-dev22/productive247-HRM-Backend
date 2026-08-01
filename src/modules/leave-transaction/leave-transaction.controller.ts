@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { LeaveTransactionService } from './leave-transaction.service';
 import { CreditBalanceDto } from './dto/credit-balance.dto';
+import { GenerateAccrualsDto } from './dto/generate-accruals.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 
@@ -34,10 +35,13 @@ export class LeaveTransactionController {
 
   // Déclenchement manuel (en plus du cron quotidien, voir AccrualSchedulerService)
   // — permet au RH de forcer une génération sans attendre le jour configuré.
+  // dto.LeaveTypeId (optionnel) restreint à un seul type — utilisé par le
+  // déclenchement automatique à la création d'un type de congé, pas par le
+  // bouton manuel qui envoie un corps vide.
   @Post('generate-accruals')
   @RequirePermission('CONFIG_TYPES_CONGE')
-  generateAccruals(@CurrentUser('employeeId') employeeId: string) {
-    return this.service.generateAccruals(employeeId);
+  generateAccruals(@Body() dto: GenerateAccrualsDto, @CurrentUser('employeeId') employeeId: string) {
+    return this.service.generateAccruals(employeeId, dto?.LeaveTypeId ? { leaveTypeId: dto.LeaveTypeId } : undefined);
   }
 
   // Credit ponctuel et manuel d'un employe pour un type de conge precis —

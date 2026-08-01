@@ -65,4 +65,11 @@ export class CreateLeaveTypeDto {
   @IsOptional()
   @IsBoolean()
   IsSystem?: boolean;
+
+  // Ne correspond à aucune colonne LeaveType — déclenche, une fois le type
+  // créé, un crédit rétroactif aux employés déjà actifs (mois en cours si
+  // accumulation mensuelle, année complète sinon). Voir LeaveTypeService.create.
+  @IsOptional()
+  @IsBoolean()
+  CreditExistingEmployees?: boolean;
 }
