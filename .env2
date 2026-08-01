@@ -1,0 +1,8 @@
+DATABASE_URL="sqlserver://localhost:1433;database=galana_hrm;user=hrm_app;password=WQjvWih4s256Qb3vz4U@MY$o;trustServerCertificate=true"
+
+JWT_SECRET="zJYcKrvvRa9btyyY5Dod/09vhfXdTINx7Bzvx6hHVMUmgOFwC8LH6vlEfiG16TYE"
+JWT_EXPIRES_IN="24h"
+
+CORS_ORIGIN="http://localhost:5173"
+
+DATABASE_URL="sqlserver://66.179.209.7:1433;database=GDP-HRM-DEV;user=HRMUser;password=WQjvWih4s256Qb3vz4U@MY$o;trustServerCertificate=true"

@@ -603,12 +603,16 @@ model LeaveType {
 model EmployeeLeaveBalance {
   Id          String   @id @default(uuid()) @db.UniqueIdentifier
   EmployeeId  String   @db.UniqueIdentifier
-  LeaveTypeId String   @db.UniqueIdentifier
+  // Nullable : passe a null si le LeaveType est supprime (onDelete: SetNull)
+  // plutot que de bloquer la suppression — la ligne de solde survit comme
+  // attribut orphelin, invisible (getBalances ne l'affiche que via une
+  // correspondance sur un LeaveType actif existant), plutot que perdue.
+  LeaveTypeId String?  @db.UniqueIdentifier
   Balance     Decimal  @default(0) @db.Decimal(6, 2)
   ModifiedAt  DateTime @default(now()) @db.DateTime2
 
-  employee  Employee  @relation(fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  leaveType LeaveType @relation(fields: [LeaveTypeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  employee  Employee   @relation(fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  leaveType LeaveType? @relation(fields: [LeaveTypeId], references: [Id], onDelete: SetNull, onUpdate: NoAction)
 
   @@unique([EmployeeId, LeaveTypeId])
   @@index([EmployeeId])
@@ -621,7 +625,10 @@ model EmployeeLeaveBalance {
 model LeaveTransaction {
   Id             String   @id @default(uuid()) @db.UniqueIdentifier
   EmployeeId     String   @db.UniqueIdentifier
-  LeaveTypeId    String   @db.UniqueIdentifier
+  // Nullable, meme raison que EmployeeLeaveBalance.LeaveTypeId ci-dessus —
+  // la suppression d'un LeaveType ne doit pas etre bloquee par son propre
+  // historique d'audit.
+  LeaveTypeId    String?  @db.UniqueIdentifier
   // Type: Acquisition | Consumption
   Type           String   @db.NVarChar(20)
   Days           Decimal  @db.Decimal(5, 2)
@@ -633,7 +640,7 @@ model LeaveTransaction {
   CreatedAt DateTime @default(now()) @db.DateTime2
 
   employee     Employee      @relation("LeaveTransactionEmployee", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  leaveType    LeaveType     @relation(fields: [LeaveTypeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  leaveType    LeaveType?    @relation(fields: [LeaveTypeId], references: [Id], onDelete: SetNull, onUpdate: NoAction)
   leaveRequest LeaveRequest? @relation(fields: [LeaveRequestId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   createdByEmployee Employee @relation("LeaveTransactionCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)

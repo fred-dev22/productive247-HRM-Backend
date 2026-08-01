@@ -1,14 +1,20 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { LeaveTransactionService } from '../leave-transaction/leave-transaction.service';
 
 type TxClient = Prisma.TransactionClient | PrismaService;
 
 @Injectable()
 export class EmployeeService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(EmployeeService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly leaveTransactionService: LeaveTransactionService,
+  ) {}
 
   // Matricule genere cote serveur (compte les EmployeeNumber "EMP..." existants,
   // en ignorant les autres prefixes eventuels comme les comptes de seed) —
@@ -43,7 +49,7 @@ export class EmployeeService {
 
   async create(dto: CreateEmployeeDto, createdBy: string) {
     const employeeNumber = dto.EmployeeNumber?.trim() || (await this.generateEmployeeNumber());
-    return this.prisma.$transaction(async (tx) => {
+    const employee = await this.prisma.$transaction(async (tx) => {
       if (dto.PositionId) {
         await this.assertPositionHasCapacity(tx, dto.PositionId);
       }
@@ -51,6 +57,16 @@ export class EmployeeService {
         data: { ...dto, EmployeeNumber: employeeNumber, FullName: `${dto.FirstName} ${dto.LastName}`, CreatedBy: createdBy },
       });
     });
+
+    // Credite le nouvel employe sur les types de conge deja actifs — mois en
+    // cours pour l'accumulation mensuelle, annee complete pour la dotation
+    // annuelle (meme regle que generateAccruals, voir sa doc). Ne bloque pas
+    // la creation de l'employe si le credit echoue.
+    await this.leaveTransactionService.generateAccruals(createdBy, { employeeId: employee.Id }).catch((err) => {
+      this.logger.warn(`Crédit initial des congés échoué pour l'employé ${employee.Id} : ${err.message}`);
+    });
+
+    return employee;
   }
 
   findAll() {

@@ -68,12 +68,23 @@ export class LeaveTransactionService {
     }));
   }
 
-  // Credite (ou debite si amount < 0) le solde en cache d'un employe pour un
-  // type de conge donne, et trace le mouvement dans LeaveTransaction pour
-  // l'audit. Utilise par generateAccruals ci-dessous ET par
+  // Credite (ou debite si type='Consumption') le solde en cache d'un employe
+  // pour un type de conge donne, et trace le mouvement dans LeaveTransaction
+  // pour l'audit. Utilise par generateAccruals ci-dessous ET par
   // LeaveRequestService (consommation a l'approbation, reversement a
   // l'annulation) — c'est le point d'entree unique qui garde les deux en
   // phase.
+  //
+  // Le solde ne descend jamais sous 0 : un debit qui depasserait le solde
+  // disponible est plafonne (ex. solde 3j, decrement de 5j demande -> solde
+  // ramene a 0, pas -2j). Le mouvement trace dans LeaveTransaction reflete le
+  // montant reellement applique (plafonne), pas le montant demande — sinon
+  // le grand livre ne correspondrait plus au solde affiche. wasClamped
+  // permet a l'appelant de signaler la difference a l'utilisateur.
+  //
+  // Lecture-puis-ecriture, pas atomique vis-a-vis d'ecritures concurrentes
+  // sur le meme (employe, type) — acceptable a l'echelle de cette
+  // application (pas de verrou optimiste sur EmployeeLeaveBalance).
   async adjustBalance(
     employeeId: string,
     leaveTypeId: string,
@@ -84,30 +95,30 @@ export class LeaveTransactionService {
     client: TxClient = this.prisma,
   ) {
     const now = new Date();
+    const current = await this.getBalance(employeeId, leaveTypeId, client);
+    const requestedDelta = type === 'Acquisition' ? amount : -amount;
+    const newBalance = Math.max(0, current + requestedDelta);
+    const appliedMagnitude = Math.abs(newBalance - current);
+    const wasClamped = appliedMagnitude < amount;
+
     await client.employeeLeaveBalance.upsert({
       where: { EmployeeId_LeaveTypeId: { EmployeeId: employeeId, LeaveTypeId: leaveTypeId } },
-      create: {
-        EmployeeId: employeeId,
-        LeaveTypeId: leaveTypeId,
-        Balance: type === 'Acquisition' ? amount : -amount,
-      },
-      update: {
-        Balance: { increment: type === 'Acquisition' ? amount : -amount },
-        ModifiedAt: now,
-      },
+      create: { EmployeeId: employeeId, LeaveTypeId: leaveTypeId, Balance: newBalance },
+      update: { Balance: newBalance, ModifiedAt: now },
     });
     await client.leaveTransaction.create({
       data: {
         EmployeeId: employeeId,
         LeaveTypeId: leaveTypeId,
         Type: type,
-        Days: amount,
+        Days: appliedMagnitude,
         StartDate: now,
         EndDate: now,
         LeaveRequestId: leaveRequestId,
         CreatedBy: actorId,
       },
     });
+    return { newBalance, appliedMagnitude, wasClamped };
   }
 
   async getBalance(employeeId: string, leaveTypeId: string, client: TxClient = this.prisma): Promise<number> {
@@ -117,7 +128,7 @@ export class LeaveTransactionService {
     return Number(row?.Balance ?? 0);
   }
 
-  // Genere les credits d'acquisition pour tous les employes actifs :
+  // Genere les credits d'acquisition :
   // - types a accumulation mensuelle -> credite DaysPerMonth a chaque appel
   // - types a dotation annuelle (MonthlyAccrual=false) -> credite DaysPerYear
   //   une seule fois par an (uniquement si aucune Acquisition n'existe deja
@@ -125,14 +136,32 @@ export class LeaveTransactionService {
   // Idempotence best-effort : le worker appelant (cron ou déclenchement
   // manuel) est responsable de ne pas relancer deux fois le même mois — voir
   // AccrualSchedulerService.LastLeaveAccrualRunAt.
-  async generateAccruals(triggeredBy: string) {
+  //
+  // opts.employeeId / opts.leaveTypeId restreignent la generation a un seul
+  // employe et/ou un seul type — utilise pour les deux declencheurs
+  // ponctuels (nouvel employe credite sur les types deja actifs, nouveau
+  // type credite retroactivement aux employes deja presents), qui doivent
+  // reutiliser exactement la meme regle (mois en cours pour le mensuel,
+  // annee complete pour l'annuel) sans dupliquer la logique ci-dessus.
+  // Un appel restreint (employeeId ou leaveTypeId fourni) ne met PAS a jour
+  // CompanySettings.LastLeaveAccrualRunAt : ce timestamp signifie "la
+  // generation complete de l'entreprise a eu lieu ce mois-ci" et ne doit pas
+  // etre modifie par un credit partiel, sous peine de faire croire au cron
+  // (ou au bouton "Générer maintenant") qu'un cycle complet a deja tourne.
+  async generateAccruals(triggeredBy: string, opts?: { employeeId?: string; leaveTypeId?: string }) {
     const now = new Date();
     const currentYear = now.getFullYear();
     const yearStart = new Date(Date.UTC(currentYear, 0, 1));
+    const isScoped = !!(opts?.employeeId || opts?.leaveTypeId);
 
     const [employees, leaveTypes] = await Promise.all([
-      this.prisma.employee.findMany({ where: { Status: { in: ['Active', 'OnTrial'] } }, select: { Id: true } }),
-      this.prisma.leaveType.findMany({ where: { IsActive: true } }),
+      this.prisma.employee.findMany({
+        where: { Status: { in: ['Active', 'OnTrial'] }, ...(opts?.employeeId ? { Id: opts.employeeId } : {}) },
+        select: { Id: true },
+      }),
+      this.prisma.leaveType.findMany({
+        where: { IsActive: true, ...(opts?.leaveTypeId ? { Id: opts.leaveTypeId } : {}) },
+      }),
     ]);
 
     let created = 0;
@@ -164,7 +193,9 @@ export class LeaveTransactionService {
       }
     }
 
-    await this.prisma.companySettings.updateMany({ data: { LastLeaveAccrualRunAt: now } });
+    if (!isScoped) {
+      await this.prisma.companySettings.updateMany({ data: { LastLeaveAccrualRunAt: now } });
+    }
     this.logger.log(`${SYSTEM_ACTOR_LABEL} : ${created} crédit(s) appliqué(s)`);
     return { created, runAt: now };
   }
@@ -173,11 +204,17 @@ export class LeaveTransactionService {
   // de generation) — distinct de generateAccruals qui ne fait que la routine
   // mensuelle/annuelle standard. Passe par adjustBalance, donc trace lui
   // aussi dans LeaveTransaction pour l'audit.
+  //
+  // Un montant negatif decremente le solde (type Consumption) au lieu de le
+  // crediter — plafonne a 0 par adjustBalance, jamais de solde negatif en
+  // base. reason reste informatif (affiche cote UI) — pas encore persiste,
+  // LeaveTransaction n'a pas de colonne dediee.
   async creditManual(employeeId: string, leaveTypeId: string, amount: number, reason: string | undefined, actorId: string) {
-    if (amount <= 0) {
-      throw new BadRequestException('Le nombre de jours à créditer doit être positif.');
+    if (amount === 0) {
+      throw new BadRequestException('Le nombre de jours ne peut pas être 0.');
     }
-    await this.adjustBalance(employeeId, leaveTypeId, amount, 'Acquisition', actorId, undefined, this.prisma);
-    return this.getBalances(employeeId);
+    const type = amount > 0 ? 'Acquisition' : 'Consumption';
+    const result = await this.adjustBalance(employeeId, leaveTypeId, Math.abs(amount), type, actorId, undefined, this.prisma);
+    return { balances: await this.getBalances(employeeId), wasClamped: result.wasClamped, newBalance: result.newBalance };
   }
 }
