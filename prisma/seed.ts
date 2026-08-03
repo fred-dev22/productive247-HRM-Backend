@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { randomUUID } from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from './generated/client';
 import { PrismaMssql } from '@prisma/adapter-mssql';
 import * as bcrypt from 'bcryptjs';
 

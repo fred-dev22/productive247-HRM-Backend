@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
-    "build:iis": "ncc build src/main.ts -o dist/standalone -t && copy .env dist\\standalone\\ && xcopy src\\i18n dist\\standalone\\i18n /E /I /Y",
+    "build:iis": "prisma generate && ncc build src/main.ts -o dist/standalone -t && copy .env dist\\standalone\\ && xcopy prisma dist\\standalone\\prisma /E /I /Y",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",

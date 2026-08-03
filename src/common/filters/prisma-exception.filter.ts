@@ -1,6 +1,6 @@
 import { ArgumentsHost, Catch, ConflictException } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../../prisma/generated/client';
 import { Request } from 'express';
 
 // Libellés français (article + nom) des champs @unique du schéma Prisma,

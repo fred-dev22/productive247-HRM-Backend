@@ -8,7 +8,7 @@
 // explicite (pas d'execution accidentelle via un simple "npm run db:reset").
 import 'dotenv/config';
 import { execSync } from 'child_process';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from './generated/client';
 import { PrismaMssql } from '@prisma/adapter-mssql';
 
 async function main() {

@@ -6,7 +6,7 @@
 // Ce script les marque comme n'ayant pas besoin de changer de mot de passe.
 // Les comptes créés APRÈS ce script via POST /users gardent le défaut true.
 import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from './generated/client';
 import { PrismaMssql } from '@prisma/adapter-mssql';
 
 const prisma = new PrismaClient({
