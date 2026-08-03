@@ -22,6 +22,16 @@ const OVERLAPPING_STATUSES = [
 
 const EDITABLE_STATUSES = ['Draft', 'Returned'];
 
+// Applique a chaque create/update mutant une demande — sans ça la reponse
+// renvoyee par l'endpoint (utilisee par le front pour patcher sa liste en
+// place) n'a pas employee/leaveType et la ligne s'affiche avec un nom et
+// des initiales vides jusqu'au prochain rechargement complet.
+const LEAVE_REQUEST_INCLUDE = {
+  employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+  leaveType: true,
+  interimEmployee: { select: { Id: true, FullName: true } },
+} as const;
+
 @Injectable()
 export class LeaveRequestService {
   constructor(
@@ -106,22 +116,35 @@ export class LeaveRequestService {
     return count;
   }
 
-  // Determine le validateur reel d'un membre de pool a une date donnee —
-  // l'interimaire si la date tombe dans sa periode, sinon le titulaire.
-  private resolveActualApprover(
-    member: { EmployeeId: string; InterimEmployeeId: string | null; InterimStartDate: Date | null; InterimEndDate: Date | null },
+  // Determine le validateur reel d'un membre de pool a une date donnee : le
+  // titulaire, sauf s'il a une demande de conge Approuvee couvrant cette
+  // date, auquel cas on route vers son interimaire declare — plus de plage
+  // de dates saisie a la main sur l'interim, l'absence est detectee au
+  // moment ou la demande arrive a ce niveau.
+  private async resolveActualApprover(
+    member: { EmployeeId: string; InterimEmployeeId: string | null },
     at: Date,
-  ): string {
-    if (
-      member.InterimEmployeeId &&
-      member.InterimStartDate &&
-      member.InterimEndDate &&
-      at >= member.InterimStartDate &&
-      at <= member.InterimEndDate
-    ) {
-      return member.InterimEmployeeId;
+  ): Promise<string> {
+    if (!member.InterimEmployeeId) return member.EmployeeId;
+    const onApprovedLeave = await this.prisma.leaveRequest.findFirst({
+      where: { EmployeeId: member.EmployeeId, Status: 'Approved', StartDate: { lte: at }, EndDate: { gte: at } },
+    });
+    return onApprovedLeave ? member.InterimEmployeeId : member.EmployeeId;
+  }
+
+  // Premier niveau (a partir de la liste triee fournie) dont le validateur
+  // resolu n'est pas le demandeur lui-meme — un validateur ne doit jamais
+  // rester bloque en attente de sa propre validation, que ce soit comme
+  // titulaire ou comme interimaire du moment. undefined si tous les niveaux
+  // restants resolvent au demandeur (approbation automatique complete).
+  private async findApplicableStep<
+    T extends { EmployeeId: string; InterimEmployeeId: string | null; StepOrder: number },
+  >(sortedMembers: T[], requesterEmployeeId: string): Promise<{ member: T; approverId: string } | undefined> {
+    for (const member of sortedMembers) {
+      const approverId = await this.resolveActualApprover(member, new Date());
+      if (approverId !== requesterEmployeeId) return { member, approverId };
     }
-    return member.EmployeeId;
+    return undefined;
   }
 
   private async assertNoOverlap(employeeId: string, startDate: Date, endDate: Date, excludeId?: string) {
@@ -181,6 +204,7 @@ export class LeaveRequestService {
         Status: 'Draft',
         CreatedBy: requesterEmployeeId,
       },
+      include: LEAVE_REQUEST_INCLUDE,
     });
   }
 
@@ -215,6 +239,7 @@ export class LeaveRequestService {
         ModifiedBy: requesterEmployeeId,
         ModifiedAt: new Date(),
       },
+      include: LEAVE_REQUEST_INCLUDE,
     });
   }
 
@@ -278,13 +303,27 @@ export class LeaveRequestService {
     });
   }
 
+  // Unites "geree" par un employe : celles dont il est le Responsable
+  // designe, mais aussi celles ou il siege comme validateur d'un pool de
+  // conges — un validateur doit garder une visibilite sur les demandes de
+  // cette equipe meme une fois qu'elles remontent au-dela de son niveau.
   private async collectManagedUnitIds(managerEmployeeId: string): Promise<string[]> {
-    const managedRoots = await this.prisma.organizationUnit.findMany({
-      where: { ManagerId: managerEmployeeId },
-      select: { Id: true },
-    });
+    const [managedRoots, validatorPools] = await Promise.all([
+      this.prisma.organizationUnit.findMany({
+        where: { ManagerId: managerEmployeeId },
+        select: { Id: true },
+      }),
+      this.prisma.approvalPool.findMany({
+        where: { ObjectType: 'Leave', members: { some: { EmployeeId: managerEmployeeId } } },
+        select: { OrganizationUnitId: true },
+      }),
+    ]);
+    const roots = new Set<string>([
+      ...managedRoots.map((unit) => unit.Id),
+      ...validatorPools.map((pool) => pool.OrganizationUnitId),
+    ]);
     const collected: string[] = [];
-    const queue = managedRoots.map((unit) => unit.Id);
+    const queue = [...roots];
     while (queue.length > 0) {
       const currentId = queue.shift() as string;
       collected.push(currentId);
@@ -316,7 +355,7 @@ export class LeaveRequestService {
       const member = await this.prisma.approvalPoolMember.findFirst({
         where: { ApprovalPoolId: lr.ApprovalPoolId as string, StepOrder: lr.CurrentApprovalStep as number },
       });
-      if (member && this.resolveActualApprover(member, now) === employeeId) {
+      if (member && (await this.resolveActualApprover(member, now)) === employeeId) {
         result.push(lr);
       }
     }
@@ -347,13 +386,23 @@ export class LeaveRequestService {
 
   private async registerMedicalLeave(
     leaveRequest: Awaited<ReturnType<LeaveRequestService['findOneRaw']>>,
-    leaveType: { Id: string },
+    leaveType: { Id: string; DaysPerYear: unknown },
     requesterEmployeeId: string,
   ) {
+    const daysPerYear = Number(leaveType.DaysPerYear);
+    if (daysPerYear > 0) {
+      const balance = await this.leaveTransactionService.getBalance(leaveRequest.EmployeeId, leaveType.Id);
+      if (balance < Number(leaveRequest.DaysCount)) {
+        throw new BadRequestException(
+          `Solde insuffisant (${balance} jour(s) disponible(s) pour ${Number(leaveRequest.DaysCount)} demandé(s))`,
+        );
+      }
+    }
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.leaveRequest.update({
         where: { Id: leaveRequest.Id },
         data: { Status: 'Registered', ModifiedBy: requesterEmployeeId, ModifiedAt: new Date() },
+        include: LEAVE_REQUEST_INCLUDE,
       });
       await this.leaveTransactionService.adjustBalance(
         leaveRequest.EmployeeId,
@@ -402,13 +451,43 @@ export class LeaveRequestService {
         "Aucun pool de validation de congé n'est configuré pour cette unité ou ses parents — contactez le RH",
       );
     }
-    const firstStep = pool.members
-      .slice()
-      .sort((a, b) => a.StepOrder - b.StepOrder)[0];
-    if (!firstStep) {
+    const sortedMembers = pool.members.slice().sort((a, b) => a.StepOrder - b.StepOrder);
+    if (sortedMembers.length === 0) {
       throw new NotFoundException('Le pool de validation applicable ne contient aucun validateur');
     }
 
+    // Si le demandeur occupe lui-meme un niveau de validateur dans ce pool,
+    // ce niveau ET tous les niveaux en dessous sont consideres deja acquis
+    // — un validateur senior n'a pas besoin qu'un validateur junior de la
+    // meme entite re-valide sa demande. Seuls les niveaux strictement
+    // au-dessus de sa propre position restent a valider (findApplicableStep
+    // gere en plus le cas, rare, ou le demandeur est aussi l'interimaire
+    // resolu d'un de ces niveaux superieurs).
+    const requesterOwnLevel = Math.max(
+      0,
+      ...sortedMembers.filter((m) => m.EmployeeId === requesterEmployeeId).map((m) => m.StepOrder),
+    );
+    const candidateMembers = sortedMembers.filter((m) => m.StepOrder > requesterOwnLevel);
+    const applicable = await this.findApplicableStep(candidateMembers, requesterEmployeeId);
+    if (!applicable) {
+      return this.prisma.$transaction(async (tx) => {
+        const updated = await tx.leaveRequest.update({
+          where: { Id: leaveRequest.Id },
+          data: {
+            Status: 'Approved', ApprovalPoolId: pool.Id, RejectionReason: null,
+            ModifiedBy: requesterEmployeeId, ModifiedAt: new Date(),
+          },
+          include: LEAVE_REQUEST_INCLUDE,
+        });
+        await this.leaveTransactionService.adjustBalance(
+          leaveRequest.EmployeeId, leaveType.Id, Number(leaveRequest.DaysCount),
+          'Consumption', requesterEmployeeId, leaveRequest.Id, tx,
+        );
+        return updated;
+      });
+    }
+
+    const { member: firstStep, approverId } = applicable;
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.leaveRequest.update({
         where: { Id: leaveRequest.Id },
@@ -420,13 +499,14 @@ export class LeaveRequestService {
           ModifiedBy: requesterEmployeeId,
           ModifiedAt: new Date(),
         },
+        include: LEAVE_REQUEST_INCLUDE,
       });
       await tx.approvalDecision.create({
         data: {
           EntityType: 'LeaveRequest',
           EntityId: leaveRequest.Id,
           ApprovalPoolMemberId: firstStep.Id,
-          ValidatedByEmployeeId: this.resolveActualApprover(firstStep, new Date()),
+          ValidatedByEmployeeId: approverId,
           StepOrder: firstStep.StepOrder,
           Decision: 'Pending',
           CreatedBy: requesterEmployeeId,
@@ -448,7 +528,7 @@ export class LeaveRequestService {
     const member = await this.prisma.approvalPoolMember.findFirst({
       where: { ApprovalPoolId: leaveRequest.ApprovalPoolId, StepOrder: leaveRequest.CurrentApprovalStep },
     });
-    if (!member || this.resolveActualApprover(member, new Date()) !== approverEmployeeId) {
+    if (!member || (await this.resolveActualApprover(member, new Date())) !== approverEmployeeId) {
       throw new ForbiddenException("Vous n'êtes pas le validateur actuel de cette demande");
     }
   }
@@ -473,9 +553,13 @@ export class LeaveRequestService {
       where: { Id: existing.ApprovalPoolId as string },
       include: { members: true },
     });
-    const nextStep = pool.members
+    // Le demandeur original (pas l'approbateur courant) est la referance a
+    // eviter — si les niveaux restants resolvent tous a lui, la demande
+    // passe directement en Approuve plutot que de rester bloquee.
+    const remainingMembers = pool.members
       .filter((m) => m.StepOrder > (existing.CurrentApprovalStep as number))
-      .sort((a, b) => a.StepOrder - b.StepOrder)[0];
+      .sort((a, b) => a.StepOrder - b.StepOrder);
+    const applicable = await this.findApplicableStep(remainingMembers, existing.EmployeeId);
 
     return this.prisma.$transaction(async (tx) => {
       await tx.approvalDecision.update({
@@ -488,17 +572,19 @@ export class LeaveRequestService {
         },
       });
 
-      if (nextStep) {
+      if (applicable) {
+        const { member: nextStep, approverId } = applicable;
         const updated = await tx.leaveRequest.update({
           where: { Id: id },
           data: { Status: `InApprovalN${nextStep.StepOrder}`, CurrentApprovalStep: nextStep.StepOrder },
+          include: LEAVE_REQUEST_INCLUDE,
         });
         await tx.approvalDecision.create({
           data: {
             EntityType: 'LeaveRequest',
             EntityId: id,
             ApprovalPoolMemberId: nextStep.Id,
-            ValidatedByEmployeeId: this.resolveActualApprover(nextStep, new Date()),
+            ValidatedByEmployeeId: approverId,
             StepOrder: nextStep.StepOrder,
             Decision: 'Pending',
             CreatedBy: approverEmployeeId,
@@ -510,6 +596,7 @@ export class LeaveRequestService {
       const updated = await tx.leaveRequest.update({
         where: { Id: id },
         data: { Status: 'Approved' },
+        include: LEAVE_REQUEST_INCLUDE,
       });
       await this.leaveTransactionService.adjustBalance(
         existing.EmployeeId,
@@ -567,16 +654,23 @@ export class LeaveRequestService {
       return tx.leaveRequest.update({
         where: { Id: existing.Id },
         data: { Status: decision, RejectionReason: comment },
+        include: LEAVE_REQUEST_INCLUDE,
       });
     });
   }
 
   async cancel(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
+    const isSelf = existing.EmployeeId === requesterEmployeeId;
+    if (!isSelf && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez annuler que vos propres demandes");
     }
-    const cancellable = ['Draft', 'Pending', 'InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4', 'Approved', 'Registered'];
+    // Une fois approuvee (ou enregistree directement, cas conge medical), le
+    // demandeur ne peut plus annuler lui-meme sa propre demande — seule une
+    // action administrative (canOverride, sur la demande d'un tiers) le peut
+    // encore, par ex. pour corriger une erreur.
+    const SELF_CANCELLABLE = ['Draft', 'Pending', 'InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'];
+    const cancellable = isSelf ? SELF_CANCELLABLE : [...SELF_CANCELLABLE, 'Approved', 'Registered'];
     if (!cancellable.includes(existing.Status)) {
       throw new BadRequestException(`Une demande au statut "${existing.Status}" ne peut plus être annulée`);
     }
@@ -587,6 +681,7 @@ export class LeaveRequestService {
       const updated = await tx.leaveRequest.update({
         where: { Id: id },
         data: { Status: 'Cancelled', ModifiedBy: requesterEmployeeId, ModifiedAt: new Date() },
+        include: LEAVE_REQUEST_INCLUDE,
       });
       if (balanceWasDebited) {
         await this.leaveTransactionService.adjustBalance(
@@ -614,6 +709,7 @@ export class LeaveRequestService {
     return this.prisma.leaveRequest.update({
       where: { Id: id },
       data: { Status: 'Done', ModifiedBy: requesterEmployeeId, ModifiedAt: new Date() },
+      include: LEAVE_REQUEST_INCLUDE,
     });
   }
 
@@ -628,6 +724,7 @@ export class LeaveRequestService {
     return this.prisma.leaveRequest.update({
       where: { Id: id },
       data: { Status: 'Regularized', ModifiedBy: requesterEmployeeId, ModifiedAt: new Date() },
+      include: LEAVE_REQUEST_INCLUDE,
     });
   }
 }
