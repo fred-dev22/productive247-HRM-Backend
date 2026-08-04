@@ -30,6 +30,12 @@ export class CreateUserDto {
   @IsBoolean()
   IsActive?: boolean;
 
+  // Coché par défaut côté front — décochable par l'admin RH au cas par cas
+  // (ex : compte de service, mot de passe déjà communiqué de vive voix).
+  @IsOptional()
+  @IsBoolean()
+  MustChangePassword?: boolean;
+
   // L'employé pour qui on active l'accès système — lié via Employee.UserId
   // dans la même transaction que la création du compte.
   @IsUUID()
