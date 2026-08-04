@@ -180,6 +180,12 @@ model Employee {
   UserId String? @unique @db.UniqueIdentifier
   // Status: Active | OnTrial | OnLeave | Inactive
   Status String  @db.NVarChar(10)
+  // Compte d'amorçage cree par le seed (ex : "Admin Galana"), pas un vrai
+  // membre du personnel — ne doit jamais apparaitre comme option dans un
+  // selecteur (beneficiaire, interimaire, validateur, responsable...), voir
+  // employee.service.ts findAll/findTeam/findDirectory. Reste visible et
+  // gerable normalement partout ou l'admin le cherche explicitement par nom.
+  IsSystem Boolean @default(false)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2

@@ -20,6 +20,7 @@ const DEFAULT_CURRENCY = 'MGA';
 // initiales vides jusqu'au prochain rechargement complet.
 const MISSION_EMPLOYEE_INCLUDE = {
   employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+  createdByEmployee: { select: { Id: true, FullName: true } },
 } as const;
 
 export interface AllowanceLine {
@@ -173,11 +174,12 @@ export class MissionOrderService {
 
   // ── CRUD ─────────────────────────────────────────────────────────────
 
-  async create(dto: CreateMissionOrderDto, requesterEmployeeId: string, canActForOthers: boolean) {
+  // N'importe quel employe peut creer un ordre de mission pour n'importe
+  // quel autre employe (decision du 01/08, aucune permission requise) — le
+  // createur (CreatedBy) reste trace pour que lui et le beneficiaire (voir
+  // findMine) gardent tous les deux la visibilite et la main sur l'ordre.
+  async create(dto: CreateMissionOrderDto, requesterEmployeeId: string) {
     const employeeId = dto.EmployeeId ?? requesterEmployeeId;
-    if (employeeId !== requesterEmployeeId && !canActForOthers) {
-      throw new ForbiddenException("Vous ne pouvez pas créer un ordre de mission pour un autre employé");
-    }
 
     const employee = await this.prisma.employee.findUnique({ where: { Id: employeeId } });
     if (!employee) {
@@ -217,7 +219,7 @@ export class MissionOrderService {
 
   async update(id: string, dto: UpdateMissionOrderDto, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez modifier que vos propres ordres de mission");
     }
     if (!EDITABLE_STATUSES.includes(existing.Status)) {
@@ -250,7 +252,7 @@ export class MissionOrderService {
 
   async remove(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez supprimer que vos propres ordres de mission");
     }
     if (existing.Status !== 'Draft') {
@@ -264,6 +266,7 @@ export class MissionOrderService {
       where: { Id: id },
       include: {
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true, EmployeeCategoryId: true } },
+        createdByEmployee: { select: { Id: true, FullName: true } },
       },
     });
     if (!missionOrder) {
@@ -282,10 +285,19 @@ export class MissionOrderService {
     return { ...missionOrder, decisions, allowance };
   }
 
-  async findMine(employeeId: string) {
+  // "Mes missions" inclut aussi celles creees pour un autre employe
+  // (decision du 01/08) — le createur doit pouvoir suivre ce qu'il a soumis.
+  // forEmployeeId (optionnel) etend le resultat aux missions du beneficiaire
+  // vise par une note de frais en cours de creation pour lui — le picker
+  // "Mission liee" doit proposer ses missions en plus des miennes.
+  async findMine(employeeId: string, forEmployeeId?: string) {
+    const employeeIds = forEmployeeId && forEmployeeId !== employeeId ? [employeeId, forEmployeeId] : [employeeId];
     const missions = await this.prisma.missionOrder.findMany({
-      where: { EmployeeId: employeeId },
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } } },
+      where: { OR: [{ EmployeeId: { in: employeeIds } }, { CreatedBy: employeeId }] },
+      include: {
+        employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+        createdByEmployee: { select: { Id: true, FullName: true } },
+      },
       orderBy: { CreatedAt: 'desc' },
     });
     return this.attachEstimatedTotals(missions);
@@ -296,7 +308,7 @@ export class MissionOrderService {
     if (unitIds.length === 0) return [];
     const missions = await this.prisma.missionOrder.findMany({
       where: { employee: { OrganizationUnitId: { in: unitIds } } },
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } } },
+      include: MISSION_EMPLOYEE_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
     return this.attachEstimatedTotals(missions);
@@ -338,7 +350,7 @@ export class MissionOrderService {
 
   async findAll() {
     const missions = await this.prisma.missionOrder.findMany({
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } } },
+      include: MISSION_EMPLOYEE_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
     return this.attachEstimatedTotals(missions);
@@ -347,7 +359,10 @@ export class MissionOrderService {
   async findPendingForMe(employeeId: string) {
     const inApproval = await this.prisma.missionOrder.findMany({
       where: { Status: { in: ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'] } },
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } } },
+      include: {
+        employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+        createdByEmployee: { select: { Id: true, FullName: true } },
+      },
       orderBy: { CreatedAt: 'asc' },
     });
     const now = new Date();
@@ -367,7 +382,7 @@ export class MissionOrderService {
 
   async submit(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez soumettre que vos propres ordres de mission");
     }
     if (!EDITABLE_STATUSES.includes(existing.Status)) {
@@ -386,15 +401,18 @@ export class MissionOrderService {
       throw new NotFoundException('Le pool de validation applicable ne contient aucun validateur');
     }
 
-    // Voir LeaveRequestService.routeToApproval : un demandeur qui occupe
-    // lui-meme un niveau de ce pool voit ce niveau ET tous ceux en dessous
-    // consideres deja acquis, seuls les niveaux au-dessus restent a valider.
-    const requesterOwnLevel = Math.max(
+    // Voir LeaveRequestService.routeToApproval : c'est le beneficiaire
+    // (existing.EmployeeId, pas forcement celui qui soumet) qui occupe
+    // eventuellement un niveau de ce pool ; ce niveau ET tous ceux en
+    // dessous sont alors consideres deja acquis, seuls les niveaux
+    // au-dessus restent a valider.
+    const beneficiaryEmployeeId = existing.EmployeeId;
+    const beneficiaryOwnLevel = Math.max(
       0,
-      ...sortedMembers.filter((m) => m.EmployeeId === requesterEmployeeId).map((m) => m.StepOrder),
+      ...sortedMembers.filter((m) => m.EmployeeId === beneficiaryEmployeeId).map((m) => m.StepOrder),
     );
-    const candidateMembers = sortedMembers.filter((m) => m.StepOrder > requesterOwnLevel);
-    const applicable = await this.findApplicableStep(candidateMembers, requesterEmployeeId);
+    const candidateMembers = sortedMembers.filter((m) => m.StepOrder > beneficiaryOwnLevel);
+    const applicable = await this.findApplicableStep(candidateMembers, beneficiaryEmployeeId);
     if (!applicable) {
       return this.prisma.missionOrder.update({
         where: { Id: id },
@@ -563,7 +581,7 @@ export class MissionOrderService {
 
   async cancel(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez annuler que vos propres ordres de mission");
     }
     if (!CANCELLABLE_STATUSES.includes(existing.Status)) {

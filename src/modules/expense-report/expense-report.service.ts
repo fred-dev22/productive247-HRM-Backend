@@ -21,6 +21,7 @@ const DEFAULT_CURRENCY = 'MGA';
 const REPORT_INCLUDE = {
   lines: { include: { expenseType: true } },
   employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+  createdByEmployee: { select: { Id: true, FullName: true } },
 } as const;
 
 @Injectable()
@@ -78,11 +79,12 @@ export class ExpenseReportService {
 
   // ── CRUD ─────────────────────────────────────────────────────────────
 
-  async create(dto: CreateExpenseReportDto, requesterEmployeeId: string, canActForOthers: boolean) {
+  // N'importe quel employe peut creer une note de frais pour n'importe quel
+  // autre employe (decision du 01/08, aucune permission requise) — le
+  // createur (CreatedBy) reste trace pour que lui et le beneficiaire (voir
+  // findMine) gardent tous les deux la visibilite et la main sur la note.
+  async create(dto: CreateExpenseReportDto, requesterEmployeeId: string) {
     const employeeId = dto.EmployeeId ?? requesterEmployeeId;
-    if (employeeId !== requesterEmployeeId && !canActForOthers) {
-      throw new ForbiddenException("Vous ne pouvez pas créer une note de frais pour un autre employé");
-    }
     const employee = await this.prisma.employee.findUnique({ where: { Id: employeeId } });
     if (!employee) {
       throw new NotFoundException(`Employé ${employeeId} introuvable`);
@@ -120,7 +122,7 @@ export class ExpenseReportService {
 
   async update(id: string, dto: UpdateExpenseReportDto, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez modifier que vos propres notes de frais");
     }
     if (!EDITABLE_STATUSES.includes(existing.Status)) {
@@ -161,7 +163,7 @@ export class ExpenseReportService {
 
   async remove(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez supprimer que vos propres notes de frais");
     }
     if (existing.Status !== 'Draft') {
@@ -175,6 +177,7 @@ export class ExpenseReportService {
       where: { Id: id },
       include: {
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+        createdByEmployee: { select: { Id: true, FullName: true } },
         lines: { include: { expenseType: true }, orderBy: { ExpenseDate: 'asc' } },
       },
     });
@@ -193,10 +196,16 @@ export class ExpenseReportService {
     return reports.map((r) => ({ ...r, TotalAmount: this.computeTotal(r.lines) }));
   }
 
+  // "Mes notes de frais" inclut aussi celles creees pour un autre employe
+  // (decision du 01/08) — le createur doit pouvoir suivre ce qu'il a soumis.
   async findMine(employeeId: string) {
     const reports = await this.prisma.expenseReport.findMany({
-      where: { EmployeeId: employeeId },
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } }, lines: { include: { expenseType: true } } },
+      where: { OR: [{ EmployeeId: employeeId }, { CreatedBy: employeeId }] },
+      include: {
+        employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+        createdByEmployee: { select: { Id: true, FullName: true } },
+        lines: { include: { expenseType: true } },
+      },
       orderBy: { CreatedAt: 'desc' },
     });
     return this.attachTotals(reports);
@@ -207,7 +216,7 @@ export class ExpenseReportService {
     if (unitIds.length === 0) return [];
     const reports = await this.prisma.expenseReport.findMany({
       where: { employee: { OrganizationUnitId: { in: unitIds } } },
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } }, lines: { include: { expenseType: true } } },
+      include: REPORT_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
     return this.attachTotals(reports);
@@ -249,7 +258,7 @@ export class ExpenseReportService {
 
   async findAll() {
     const reports = await this.prisma.expenseReport.findMany({
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } }, lines: { include: { expenseType: true } } },
+      include: REPORT_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
     return this.attachTotals(reports);
@@ -258,7 +267,11 @@ export class ExpenseReportService {
   async findPendingForMe(employeeId: string) {
     const inApproval = await this.prisma.expenseReport.findMany({
       where: { Status: { in: ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'] } },
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } }, lines: { include: { expenseType: true } } },
+      include: {
+        employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+        createdByEmployee: { select: { Id: true, FullName: true } },
+        lines: { include: { expenseType: true } },
+      },
       orderBy: { CreatedAt: 'asc' },
     });
     const now = new Date();
@@ -278,7 +291,7 @@ export class ExpenseReportService {
 
   async submit(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez soumettre que vos propres notes de frais");
     }
     if (!EDITABLE_STATUSES.includes(existing.Status)) {
@@ -301,15 +314,18 @@ export class ExpenseReportService {
       throw new NotFoundException('Le pool de validation applicable ne contient aucun validateur');
     }
 
-    // Voir LeaveRequestService.routeToApproval : un demandeur qui occupe
-    // lui-meme un niveau de ce pool voit ce niveau ET tous ceux en dessous
-    // consideres deja acquis, seuls les niveaux au-dessus restent a valider.
-    const requesterOwnLevel = Math.max(
+    // Voir LeaveRequestService.routeToApproval : c'est le beneficiaire
+    // (existing.EmployeeId, pas forcement celui qui soumet) qui occupe
+    // eventuellement un niveau de ce pool ; ce niveau ET tous ceux en
+    // dessous sont alors consideres deja acquis, seuls les niveaux
+    // au-dessus restent a valider.
+    const beneficiaryEmployeeId = existing.EmployeeId;
+    const beneficiaryOwnLevel = Math.max(
       0,
-      ...sortedMembers.filter((m) => m.EmployeeId === requesterEmployeeId).map((m) => m.StepOrder),
+      ...sortedMembers.filter((m) => m.EmployeeId === beneficiaryEmployeeId).map((m) => m.StepOrder),
     );
-    const candidateMembers = sortedMembers.filter((m) => m.StepOrder > requesterOwnLevel);
-    const applicable = await this.findApplicableStep(candidateMembers, requesterEmployeeId);
+    const candidateMembers = sortedMembers.filter((m) => m.StepOrder > beneficiaryOwnLevel);
+    const applicable = await this.findApplicableStep(candidateMembers, beneficiaryEmployeeId);
     if (!applicable) {
       return this.prisma.expenseReport.update({
         where: { Id: id },
@@ -479,7 +495,7 @@ export class ExpenseReportService {
 
   async cancel(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canOverride) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez annuler que vos propres notes de frais");
     }
     if (!CANCELLABLE_STATUSES.includes(existing.Status)) {

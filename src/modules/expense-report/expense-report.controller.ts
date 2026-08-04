@@ -15,9 +15,8 @@ export class ExpenseReportController {
   create(
     @Body() dto: CreateExpenseReportDto,
     @CurrentUser('employeeId') employeeId: string,
-    @CurrentPermissions() permissions: Set<string>,
   ) {
-    return this.service.create(dto, employeeId, permissions.has('FRAIS_VOIR_TOUT'));
+    return this.service.create(dto, employeeId);
   }
 
   // Doit rester avant ':id' — sinon Nest matcherait ces segments comme des id.

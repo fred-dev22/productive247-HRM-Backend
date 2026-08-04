@@ -69,8 +69,32 @@ export class EmployeeService {
     return employee;
   }
 
+  // IsSystem exclut le compte d'amorcage seede ("Admin Galana") — pas un
+  // vrai membre du personnel, ne doit jamais apparaitre dans une liste ou
+  // un selecteur (voir migration IsSystem + prisma/backfill-employee-is-system.ts).
   findAll() {
-    return this.prisma.employee.findMany();
+    return this.prisma.employee.findMany({ where: { IsSystem: false } });
+  }
+
+  // Annuaire minimal, ouvert a tout employe authentifie (pas de permission
+  // EMPLOYE_VOIR_TOUT requise) — sert les selecteurs de beneficiaire/
+  // interimaire (n'importe qui peut soumettre une demande pour n'importe
+  // qui, decision du 01/08) sans exposer les champs sensibles (date de
+  // naissance, numero de piece d'identite, etc.) que renvoie findAll().
+  findDirectory() {
+    return this.prisma.employee.findMany({
+      where: { Status: 'Active', IsSystem: false },
+      select: {
+        Id: true,
+        FirstName: true,
+        LastName: true,
+        FullName: true,
+        EmployeeNumber: true,
+        OrganizationUnitId: true,
+        EmployeeCategoryId: true,
+      },
+      orderBy: { FullName: 'asc' },
+    });
   }
 
   // "Son équipe" = les employés des unités organisationnelles que le
@@ -81,7 +105,7 @@ export class EmployeeService {
       return [];
     }
     return this.prisma.employee.findMany({
-      where: { OrganizationUnitId: { in: unitIds } },
+      where: { OrganizationUnitId: { in: unitIds }, IsSystem: false },
     });
   }
 

@@ -38,6 +38,13 @@ export class EmployeeController {
     return this.service.findTeam(employeeId);
   }
 
+  // Pas de @RequirePermission ici, volontairement — voir doc de
+  // findDirectory() : accessible à tout compte authentifié.
+  @Get('directory')
+  findDirectory() {
+    return this.service.findDirectory();
+  }
+
   @Get('next-number')
   @RequirePermission('EMPLOYE_CREER')
   async nextNumber() {

@@ -15,9 +15,8 @@ export class MissionOrderController {
   create(
     @Body() dto: CreateMissionOrderDto,
     @CurrentUser('employeeId') employeeId: string,
-    @CurrentPermissions() permissions: Set<string>,
   ) {
-    return this.service.create(dto, employeeId, permissions.has('MISSION_VOIR_TOUT'));
+    return this.service.create(dto, employeeId);
   }
 
   // Doit rester avant ':id' — sinon Nest matcherait ces segments comme des id.
@@ -33,8 +32,11 @@ export class MissionOrderController {
   }
 
   @Get('mine')
-  findMine(@CurrentUser('employeeId') employeeId: string) {
-    return this.service.findMine(employeeId);
+  findMine(
+    @CurrentUser('employeeId') employeeId: string,
+    @Query('forEmployeeId') forEmployeeId?: string,
+  ) {
+    return this.service.findMine(employeeId, forEmployeeId);
   }
 
   @Get('team')

@@ -241,6 +241,7 @@ async function main() {
         OrganizationUnitId: orgUnitId,
         UserId: user.Id,
         Status: 'Active',
+        IsSystem: true,
         CreatedBy: employeeId,
       },
     });

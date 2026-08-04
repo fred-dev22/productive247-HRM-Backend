@@ -30,6 +30,7 @@ const LEAVE_REQUEST_INCLUDE = {
   employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
   leaveType: true,
   interimEmployee: { select: { Id: true, FullName: true } },
+  createdByEmployee: { select: { Id: true, FullName: true } },
 } as const;
 
 @Injectable()
@@ -49,6 +50,28 @@ export class LeaveRequestService {
       where: { ReferenceCode: { startsWith: prefix } },
     });
     return `${prefix}${String(count + 1).padStart(5, '0')}`;
+  }
+
+  // Solde insuffisant n'est plus bloquant a la soumission (decision du
+  // 04/08, meme traitement que le preavis, voir routeToApproval) — cet
+  // indicateur permet au front d'afficher l'avertissement en rouge sur les
+  // ecrans de validation, calcule au moment de l'affichage (pas figé a la
+  // soumission) puisque le solde peut evoluer entre-temps.
+  private async attachBalanceFlag<
+    T extends { EmployeeId: string; LeaveTypeId: string; DaysCount: unknown; leaveType?: { DaysPerYear: unknown } | null },
+  >(item: T): Promise<T & { InsufficientBalance: boolean }> {
+    const daysPerYear = Number(item.leaveType?.DaysPerYear ?? 0);
+    if (daysPerYear <= 0) {
+      return { ...item, InsufficientBalance: false };
+    }
+    const balance = await this.leaveTransactionService.getBalance(item.EmployeeId, item.LeaveTypeId);
+    return { ...item, InsufficientBalance: balance < Number(item.DaysCount) };
+  }
+
+  private attachBalanceFlags<
+    T extends { EmployeeId: string; LeaveTypeId: string; DaysCount: unknown; leaveType?: { DaysPerYear: unknown } | null },
+  >(items: T[]): Promise<(T & { InsufficientBalance: boolean })[]> {
+    return Promise.all(items.map((item) => this.attachBalanceFlag(item)));
   }
 
   // Remonte OrganizationUnit.ParentId jusqu'a la racine — reutilise pour
@@ -166,11 +189,13 @@ export class LeaveRequestService {
 
   // ── CRUD ─────────────────────────────────────────────────────────────
 
-  async create(dto: CreateLeaveRequestDto, requesterEmployeeId: string, canActForOthers: boolean) {
+  // N'importe quel employe peut soumettre une demande pour n'importe quel
+  // autre employe (decision du 01/08, aucune permission requise) — le
+  // createur (CreatedBy) reste trace pour que lui et le beneficiaire (voir
+  // findMine) gardent tous les deux la visibilite et la main sur la
+  // demande (voir update/remove/submit/cancel ci-dessous).
+  async create(dto: CreateLeaveRequestDto, requesterEmployeeId: string) {
     const employeeId = dto.EmployeeId ?? requesterEmployeeId;
-    if (employeeId !== requesterEmployeeId && !canActForOthers) {
-      throw new ForbiddenException("Vous ne pouvez pas soumettre une demande pour un autre employé");
-    }
 
     const employee = await this.prisma.employee.findUnique({ where: { Id: employeeId } });
     if (!employee) {
@@ -210,7 +235,7 @@ export class LeaveRequestService {
 
   async update(id: string, dto: UpdateLeaveRequestDto, requesterEmployeeId: string, canActForOthers: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canActForOthers) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canActForOthers) {
       throw new ForbiddenException("Vous ne pouvez modifier que vos propres demandes");
     }
     if (!EDITABLE_STATUSES.includes(existing.Status)) {
@@ -245,7 +270,7 @@ export class LeaveRequestService {
 
   async remove(id: string, requesterEmployeeId: string, canActForOthers: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canActForOthers) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canActForOthers) {
       throw new ForbiddenException("Vous ne pouvez supprimer que vos propres demandes");
     }
     if (existing.Status !== 'Draft') {
@@ -269,6 +294,7 @@ export class LeaveRequestService {
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true, OrganizationUnitId: true } },
         leaveType: true,
         interimEmployee: { select: { Id: true, FullName: true } },
+        createdByEmployee: { select: { Id: true, FullName: true } },
       },
     });
     if (!leaveRequest) {
@@ -279,28 +305,36 @@ export class LeaveRequestService {
       orderBy: { StepOrder: 'asc' },
       include: { validatedByEmployee: { select: { Id: true, FullName: true } } },
     });
-    return { ...leaveRequest, decisions };
+    const withBalance = await this.attachBalanceFlag(leaveRequest);
+    return { ...withBalance, decisions };
   }
 
-  findMine(employeeId: string) {
-    return this.prisma.leaveRequest.findMany({
-      where: { EmployeeId: employeeId },
+  // "Mes demandes" inclut aussi les demandes que j'ai creees pour un autre
+  // employe (decision du 01/08, n'importe qui peut soumettre pour n'importe
+  // qui) — le createur doit pouvoir suivre ce qu'il a soumis, pas seulement
+  // le beneficiaire.
+  async findMine(employeeId: string) {
+    const requests = await this.prisma.leaveRequest.findMany({
+      where: { OR: [{ EmployeeId: employeeId }, { CreatedBy: employeeId }] },
       include: {
         leaveType: true,
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+        createdByEmployee: { select: { Id: true, FullName: true } },
       },
       orderBy: { CreatedAt: 'desc' },
     });
+    return this.attachBalanceFlags(requests);
   }
 
   async findTeam(managerEmployeeId: string) {
     const unitIds = await this.collectManagedUnitIds(managerEmployeeId);
     if (unitIds.length === 0) return [];
-    return this.prisma.leaveRequest.findMany({
+    const requests = await this.prisma.leaveRequest.findMany({
       where: { employee: { OrganizationUnitId: { in: unitIds } } },
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } }, leaveType: true },
+      include: LEAVE_REQUEST_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
+    return this.attachBalanceFlags(requests);
   }
 
   // Unites "geree" par un employe : celles dont il est le Responsable
@@ -336,17 +370,22 @@ export class LeaveRequestService {
     return collected;
   }
 
-  findAll() {
-    return this.prisma.leaveRequest.findMany({
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } }, leaveType: true },
+  async findAll() {
+    const requests = await this.prisma.leaveRequest.findMany({
+      include: LEAVE_REQUEST_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
+    return this.attachBalanceFlags(requests);
   }
 
   async findPendingForMe(employeeId: string) {
     const inApproval = await this.prisma.leaveRequest.findMany({
       where: { Status: { in: ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'] } },
-      include: { employee: { select: { Id: true, FullName: true, EmployeeNumber: true } }, leaveType: true },
+      include: {
+        employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+        createdByEmployee: { select: { Id: true, FullName: true } },
+        leaveType: true,
+      },
       orderBy: { CreatedAt: 'asc' },
     });
     const now = new Date();
@@ -359,14 +398,14 @@ export class LeaveRequestService {
         result.push(lr);
       }
     }
-    return result;
+    return this.attachBalanceFlags(result);
   }
 
   // ── Workflow ─────────────────────────────────────────────────────────
 
   async submit(id: string, requesterEmployeeId: string, canActForOthers: boolean) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId && !canActForOthers) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canActForOthers) {
       throw new ForbiddenException("Vous ne pouvez soumettre que vos propres demandes");
     }
     if (!EDITABLE_STATUSES.includes(existing.Status)) {
@@ -423,27 +462,16 @@ export class LeaveRequestService {
     leaveType: { Id: string; DaysPerYear: unknown; MinNoticeDays: number },
     requesterEmployeeId: string,
   ) {
-    const minNoticeDays = leaveType.MinNoticeDays ?? 0;
-    if (minNoticeDays > 0) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const diffDays = Math.ceil((leaveRequest.StartDate.getTime() - today.getTime()) / 86400000);
-      if (diffDays < minNoticeDays) {
-        throw new BadRequestException(
-          `Cette demande nécessite un préavis de ${minNoticeDays} jour(s) — soumise trop tard`,
-        );
-      }
-    }
+    // Le préavis minimum n'est plus bloquant (decision du 01/08) — une
+    // demande soumise trop tard reste soumise normalement, le validateur
+    // voit l'avertissement (calculé côté front à partir de StartDate/
+    // CreatedAt/MinNoticeDays) et décide en connaissance de cause.
 
-    const daysPerYear = Number(leaveType.DaysPerYear);
-    if (daysPerYear > 0) {
-      const balance = await this.leaveTransactionService.getBalance(leaveRequest.EmployeeId, leaveType.Id);
-      if (balance < Number(leaveRequest.DaysCount)) {
-        throw new BadRequestException(
-          `Solde insuffisant (${balance} jour(s) disponible(s) pour ${Number(leaveRequest.DaysCount)} demandé(s))`,
-        );
-      }
-    }
+    // Le solde insuffisant n'est plus bloquant non plus (decision du 04/08,
+    // meme traitement que le preavis) — la demande est quand meme soumise,
+    // le front affiche l'avertissement en rouge et le validateur decide en
+    // connaissance de cause. La consommation reste plafonnee a 0 par
+    // adjustBalance (jamais de solde negatif en base), voir approve().
 
     const pool = await this.approvalPoolService.findApplicablePool(employee.OrganizationUnitId, 'Leave');
     if (!pool) {
@@ -456,19 +484,23 @@ export class LeaveRequestService {
       throw new NotFoundException('Le pool de validation applicable ne contient aucun validateur');
     }
 
-    // Si le demandeur occupe lui-meme un niveau de validateur dans ce pool,
-    // ce niveau ET tous les niveaux en dessous sont consideres deja acquis
-    // — un validateur senior n'a pas besoin qu'un validateur junior de la
-    // meme entite re-valide sa demande. Seuls les niveaux strictement
-    // au-dessus de sa propre position restent a valider (findApplicableStep
-    // gere en plus le cas, rare, ou le demandeur est aussi l'interimaire
-    // resolu d'un de ces niveaux superieurs).
-    const requesterOwnLevel = Math.max(
+    // Si le beneficiaire (pas forcement celui qui soumet — voir decision du
+    // 01/08, n'importe qui peut creer/soumettre pour n'importe qui) occupe
+    // lui-meme un niveau de validateur dans ce pool, ce niveau ET tous les
+    // niveaux en dessous sont consideres deja acquis — un validateur senior
+    // n'a pas besoin qu'un validateur junior de la meme entite re-valide sa
+    // demande, meme si c'est son assistant qui a rempli le formulaire pour
+    // lui. Seuls les niveaux strictement au-dessus de sa propre position
+    // restent a valider (findApplicableStep gere en plus le cas, rare, ou
+    // le beneficiaire est aussi l'interimaire resolu d'un de ces niveaux
+    // superieurs).
+    const beneficiaryEmployeeId = leaveRequest.EmployeeId;
+    const beneficiaryOwnLevel = Math.max(
       0,
-      ...sortedMembers.filter((m) => m.EmployeeId === requesterEmployeeId).map((m) => m.StepOrder),
+      ...sortedMembers.filter((m) => m.EmployeeId === beneficiaryEmployeeId).map((m) => m.StepOrder),
     );
-    const candidateMembers = sortedMembers.filter((m) => m.StepOrder > requesterOwnLevel);
-    const applicable = await this.findApplicableStep(candidateMembers, requesterEmployeeId);
+    const candidateMembers = sortedMembers.filter((m) => m.StepOrder > beneficiaryOwnLevel);
+    const applicable = await this.findApplicableStep(candidateMembers, beneficiaryEmployeeId);
     if (!applicable) {
       return this.prisma.$transaction(async (tx) => {
         const updated = await tx.leaveRequest.update({
@@ -661,7 +693,7 @@ export class LeaveRequestService {
 
   async cancel(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
-    const isSelf = existing.EmployeeId === requesterEmployeeId;
+    const isSelf = existing.EmployeeId === requesterEmployeeId || existing.CreatedBy === requesterEmployeeId;
     if (!isSelf && !canOverride) {
       throw new ForbiddenException("Vous ne pouvez annuler que vos propres demandes");
     }
@@ -700,7 +732,7 @@ export class LeaveRequestService {
 
   async markDone(id: string, requesterEmployeeId: string) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId) {
       throw new ForbiddenException("Vous ne pouvez mettre à jour que vos propres demandes");
     }
     if (existing.Status !== 'Registered') {
@@ -715,7 +747,7 @@ export class LeaveRequestService {
 
   async regularize(id: string, requesterEmployeeId: string) {
     const existing = await this.findOneRaw(id);
-    if (existing.EmployeeId !== requesterEmployeeId) {
+    if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId) {
       throw new ForbiddenException("Vous ne pouvez mettre à jour que vos propres demandes");
     }
     if (existing.Status !== 'Done') {
