@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCalendarDto } from './dto/create-calendar.dto';
 import { UpdateCalendarDto } from './dto/update-calendar.dto';
@@ -13,15 +13,24 @@ const WORK_DAYS_INCLUDE = {
 export class CalendarService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(dto: CreateCalendarDto, createdBy: string) {
-    return this.prisma.calendar.create({
-      data: {
-        Name: dto.Name,
-        IsDefault: dto.IsDefault ?? false,
-        CreatedBy: createdBy,
-        workDays: { create: dto.WorkDays },
-      },
-      include: WORK_DAYS_INCLUDE,
+  async create(dto: CreateCalendarDto, createdBy: string) {
+    return this.prisma.$transaction(async (tx) => {
+      // Un seul calendrier par defaut a la fois — sans ca, en creer un second
+      // avec IsDefault:true laisserait deux lignes a true en base et
+      // findDefault() resterait bloque sur le premier trouve.
+      if (dto.IsDefault) {
+        await tx.calendar.updateMany({ where: { IsDefault: true }, data: { IsDefault: false } });
+      }
+      return tx.calendar.create({
+        data: {
+          Name: dto.Name,
+          IsDefault: dto.IsDefault ?? false,
+          EmployeeCategoryId: dto.EmployeeCategoryId,
+          CreatedBy: createdBy,
+          workDays: { create: dto.WorkDays },
+        },
+        include: WORK_DAYS_INCLUDE,
+      });
     });
   }
 
@@ -40,6 +49,30 @@ export class CalendarService {
     return calendar;
   }
 
+  // null (pas d'exception) si la categorie n'a pas de calendrier dedie —
+  // c'est a l'appelant de decider du repli (voir resolveForEmployee).
+  findByCategory(employeeCategoryId: string) {
+    return this.prisma.calendar.findFirst({
+      where: { EmployeeCategoryId: employeeCategoryId },
+      include: WORK_DAYS_INCLUDE,
+    });
+  }
+
+  // Calendrier applicable a un employe : celui de sa categorie s'il en a un
+  // de dedie, sinon le calendrier global par defaut (decision du 04/08 —
+  // calendrier par categorie uniquement, pas de surcharge par employe).
+  async resolveForEmployee(employeeId: string) {
+    const employee = await this.prisma.employee.findUnique({
+      where: { Id: employeeId },
+      select: { EmployeeCategoryId: true },
+    });
+    if (employee?.EmployeeCategoryId) {
+      const byCategory = await this.findByCategory(employee.EmployeeCategoryId);
+      if (byCategory) return byCategory;
+    }
+    return this.findDefault();
+  }
+
   async findOne(id: string) {
     const calendar = await this.prisma.calendar.findUnique({
       where: { Id: id },
@@ -54,11 +87,18 @@ export class CalendarService {
   async update(id: string, dto: UpdateCalendarDto, modifiedBy: string) {
     await this.findOne(id);
     return this.prisma.$transaction(async (tx) => {
+      if (dto.IsDefault) {
+        await tx.calendar.updateMany({
+          where: { IsDefault: true, Id: { not: id } },
+          data: { IsDefault: false },
+        });
+      }
       await tx.calendar.update({
         where: { Id: id },
         data: {
           Name: dto.Name,
           IsDefault: dto.IsDefault,
+          EmployeeCategoryId: dto.EmployeeCategoryId,
           ModifiedBy: modifiedBy,
           ModifiedAt: new Date(),
         },
@@ -78,7 +118,18 @@ export class CalendarService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
-    return this.prisma.calendar.delete({ where: { Id: id } });
+    const calendar = await this.findOne(id);
+    if (calendar.IsDefault) {
+      throw new BadRequestException(
+        'Le calendrier par défaut ne peut pas être supprimé — définissez-en un autre comme défaut d\'abord',
+      );
+    }
+    // CalendarWorkDay.calendar est onDelete: NoAction (contrainte SQL Server,
+    // voir en-tete du schema) — supprimer le calendrier sans d'abord vider
+    // ses lignes de jours provoque une violation de FK.
+    return this.prisma.$transaction([
+      this.prisma.calendarWorkDay.deleteMany({ where: { CalendarId: id } }),
+      this.prisma.calendar.delete({ where: { Id: id } }),
+    ]);
   }
 }

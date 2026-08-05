@@ -90,19 +90,32 @@ export class LeaveRequestService {
     return ids;
   }
 
+  // Calendrier de la categorie du beneficiaire s'il en a un de dedie, sinon
+  // le calendrier global par defaut (voir CalendarService.resolveForEmployee
+  // — meme logique, dupliquee ici faute d'injection cross-module existante
+  // pour ce service).
+  private async resolveApplicableCalendar(employeeCategoryId: string | null) {
+    if (employeeCategoryId) {
+      const byCategory = await this.prisma.calendar.findFirst({
+        where: { EmployeeCategoryId: employeeCategoryId },
+        include: { workDays: true },
+      });
+      if (byCategory) return byCategory;
+    }
+    return this.prisma.calendar.findFirst({ where: { IsDefault: true }, include: { workDays: true } });
+  }
+
   private async computeWorkingDays(
     startDate: Date,
     endDate: Date,
     organizationUnitId: string,
+    employeeCategoryId: string | null,
   ): Promise<number> {
     if (endDate < startDate) {
       throw new BadRequestException('La date de fin doit être postérieure ou égale à la date de début');
     }
 
-    const calendar = await this.prisma.calendar.findFirst({
-      where: { IsDefault: true },
-      include: { workDays: true },
-    });
+    const calendar = await this.resolveApplicableCalendar(employeeCategoryId);
     if (!calendar) {
       throw new BadRequestException("Aucun calendrier par défaut n'est configuré — contactez le RH");
     }
@@ -209,7 +222,7 @@ export class LeaveRequestService {
 
     const startDate = new Date(dto.StartDate);
     const endDate = new Date(dto.EndDate);
-    const daysCount = await this.computeWorkingDays(startDate, endDate, employee.OrganizationUnitId);
+    const daysCount = await this.computeWorkingDays(startDate, endDate, employee.OrganizationUnitId, employee.EmployeeCategoryId);
     if (daysCount <= 0) {
       throw new BadRequestException("La période sélectionnée ne contient aucun jour ouvré");
     }
@@ -249,7 +262,7 @@ export class LeaveRequestService {
     let daysCount = existing.DaysCount;
     if (dto.StartDate || dto.EndDate) {
       const employee = await this.prisma.employee.findUniqueOrThrow({ where: { Id: existing.EmployeeId } });
-      daysCount = await this.computeWorkingDays(startDate, endDate, employee.OrganizationUnitId) as unknown as typeof existing.DaysCount;
+      daysCount = await this.computeWorkingDays(startDate, endDate, employee.OrganizationUnitId, employee.EmployeeCategoryId) as unknown as typeof existing.DaysCount;
     }
 
     return this.prisma.leaveRequest.update({

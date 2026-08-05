@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CalendarService } from './calendar.service';
 import { CreateCalendarDto } from './dto/create-calendar.dto';
@@ -31,6 +32,15 @@ export class CalendarController {
   @Get('default')
   findDefault() {
     return this.service.findDefault();
+  }
+
+  // Doit rester avant ':id' — sinon Nest matcherait "resolve" comme findOne('resolve').
+  // Pas de @RequirePermission (comme GET /calendars et /employees/directory) —
+  // juste des horaires de travail, nécessaire pour prévisualiser correctement
+  // une demande créée pour un collègue d'une autre catégorie.
+  @Get('resolve')
+  resolve(@Query('employeeId') employeeId: string, @CurrentUser('employeeId') requesterId: string) {
+    return this.service.resolveForEmployee(employeeId || requesterId);
   }
 
   @Get(':id')

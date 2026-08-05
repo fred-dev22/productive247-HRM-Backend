@@ -499,6 +499,15 @@ model CompanySettings {
   // au routeur frontend pour ne plus jamais raffiche l'onboarding ensuite.
   IsOnboarded               Boolean   @default(false)
 
+  // Derniere portee consultee dans Configuration > Calendrier ('Global' ou
+  // 'Category') — persistee cote serveur (pas de localStorage) pour que
+  // n'importe quel admin, sur n'importe quel poste, retrouve l'etat laisse.
+  // CalendarConfigCategoryId n'a de sens que si CalendarConfigScope =
+  // 'Category' ; pas de FK, la valeur est juste ignoree cote frontend si la
+  // categorie n'existe plus.
+  CalendarConfigScope       String?   @db.NVarChar(20)
+  CalendarConfigCategoryId  String?   @db.UniqueIdentifier
+
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
 
@@ -512,11 +521,18 @@ model Calendar {
   Name      String  @db.NVarChar(100)
   IsDefault Boolean @default(false)
 
+  // Nullable : calendrier global (portee par defaut) quand absent. Unique
+  // sur un champ nullable — MSSQL autorise plusieurs NULL, une seule ligne
+  // par categorie precise (voir decision du 04/08 : calendrier par
+  // categorie uniquement, pas de surcharge par employe individuel).
+  EmployeeCategoryId String? @unique @db.UniqueIdentifier
+
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
 
+  employeeCategory   EmployeeCategory? @relation(fields: [EmployeeCategoryId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   createdByEmployee  Employee  @relation("CalendarCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee? @relation("CalendarModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -734,7 +750,7 @@ model MissionOrder {
   ReferenceCode       String   @unique @db.NVarChar(20)
   EmployeeId          String   @db.UniqueIdentifier
   Destination         String   @db.NVarChar(150)
-  // MissionCategory: Local | National | International
+  // MissionCategory: National | International
   MissionCategory     String   @db.NVarChar(20)
   Purpose             String   @db.NVarChar(500)
   DepartureDate       DateTime @db.Date
@@ -859,6 +875,7 @@ model EmployeeCategory {
   employees           Employee[]
   users               User[]
   categoryPermissions CategoryPermission[]
+  calendars           Calendar[]
 }
 
 /// Catalogue configurable des types de frais. L'admin RH peut ajouter ou
@@ -890,7 +907,7 @@ model ExpenseConfig {
   Id                 String  @id @default(uuid()) @db.UniqueIdentifier
   EmployeeCategoryId String  @db.UniqueIdentifier
   ExpenseTypeId      String  @db.UniqueIdentifier
-  // MissionCategory: Local | National | International
+  // MissionCategory: National | International
   MissionCategory    String  @db.NVarChar(20)
   DailyRate          Decimal @db.Decimal(18, 2)
   Currency           String  @db.NVarChar(3)

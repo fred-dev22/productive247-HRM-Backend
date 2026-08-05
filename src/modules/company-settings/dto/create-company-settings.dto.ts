@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
@@ -43,4 +44,15 @@ export class CreateCompanySettingsDto {
   @Min(1)
   @Max(28)
   LeaveAccrualRunDay?: number;
+
+  // Derniere portee consultee dans Configuration > Calendrier (Global ou
+  // Categorie) — persistee ici (et non cote navigateur) pour que n'importe
+  // quel admin, sur n'importe quel poste, retrouve l'etat laisse.
+  @IsOptional()
+  @IsIn(['Global', 'Category'])
+  CalendarConfigScope?: string;
+
+  @IsOptional()
+  @IsUUID()
+  CalendarConfigCategoryId?: string;
 }

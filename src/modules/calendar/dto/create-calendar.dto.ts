@@ -6,6 +6,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   ValidateNested,
 } from 'class-validator';
@@ -20,6 +21,12 @@ export class CreateCalendarDto {
   @IsOptional()
   @IsBoolean()
   IsDefault?: boolean;
+
+  // Absent/null = calendrier global. Une catégorie n'a jamais plus d'un
+  // calendrier dédié (contrainte @unique en base, voir schema.prisma).
+  @IsOptional()
+  @IsUUID()
+  EmployeeCategoryId?: string;
 
   // Exactly one row per day of the week (Monday..Sunday) — the frontend
   // always sends the full week, replaced atomically on update.

@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Min,
   MaxLength,
 } from 'class-validator';
 
@@ -16,10 +17,11 @@ export class CreateExpenseConfigDto {
   @IsUUID()
   ExpenseTypeId: string;
 
-  @IsIn(['Local', 'National', 'International'])
+  @IsIn(['National', 'International'])
   MissionCategory: string;
 
   @IsNumber()
+  @Min(0)
   DailyRate: number;
 
   @IsString()

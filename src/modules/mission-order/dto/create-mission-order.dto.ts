@@ -9,7 +9,7 @@ import {
   Min,
 } from 'class-validator';
 
-const MISSION_CATEGORIES = ['Local', 'National', 'International'];
+const MISSION_CATEGORIES = ['National', 'International'];
 const TRANSPORT_MODES = ['PersonalCar', 'CompanyCar', 'PublicTransport', 'Plane', 'Other'];
 
 export class CreateMissionOrderDto {
