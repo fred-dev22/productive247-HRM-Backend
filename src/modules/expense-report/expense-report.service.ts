@@ -46,6 +46,7 @@ export class ExpenseReportService {
       referenceCode: report.ReferenceCode,
       beneficiaryId: report.EmployeeId,
       creatorId: report.CreatedBy,
+      summary: report.Title,
       details: [
         { label: 'Titre', value: report.Title },
         { label: 'Montant total', value: `${total.toLocaleString('fr-FR')} ${report.Currency}` },

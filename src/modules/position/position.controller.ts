@@ -11,6 +11,7 @@ import { PositionService } from './position.service';
 import { CreatePositionDto } from './dto/create-position.dto';
 import { UpdatePositionDto } from './dto/update-position.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { BulkImportDto } from '../../common/dto/bulk-import.dto';
 
 @Controller('positions')
 export class PositionController {
@@ -19,6 +20,11 @@ export class PositionController {
   @Post()
   create(@Body() dto: CreatePositionDto, @CurrentUser('employeeId') employeeId: string) {
     return this.service.create(dto, employeeId);
+  }
+
+  @Post('bulk')
+  bulkCreate(@Body() dto: BulkImportDto, @CurrentUser('employeeId') employeeId: string) {
+    return this.service.bulkCreate(dto.items, employeeId);
   }
 
   @Get()

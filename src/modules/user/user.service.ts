@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
+import { Prisma } from '../../../prisma/generated/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { renderEmailHtml, frontendOrigin } from '../mail/email-templates';
@@ -153,8 +154,17 @@ export class UserService {
 
   async remove(id: string) {
     await this.findOne(id);
-    const user = await this.prisma.user.delete({ where: { Id: id } });
-    return this.sanitize(user);
+    try {
+      const user = await this.prisma.user.delete({ where: { Id: id } });
+      return this.sanitize(user);
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+        throw new ConflictException(
+          'Ce compte est encore lié à un employé et ne peut pas être supprimé.',
+        );
+      }
+      throw err;
+    }
   }
 
   // Change juste l'étiquette de catégorie du compte — ne touche JAMAIS aux

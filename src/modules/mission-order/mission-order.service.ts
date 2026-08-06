@@ -56,6 +56,7 @@ export class MissionOrderService {
       referenceCode: mo.ReferenceCode,
       beneficiaryId: mo.EmployeeId,
       creatorId: mo.CreatedBy,
+      summary: mo.Destination,
       details: [
         { label: 'Destination', value: mo.Destination },
         { label: 'Départ', value: formatDateFr(mo.DepartureDate) },

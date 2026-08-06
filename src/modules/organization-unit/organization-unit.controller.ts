@@ -12,6 +12,7 @@ import { CreateOrganizationUnitDto } from './dto/create-organization-unit.dto';
 import { UpdateOrganizationUnitDto } from './dto/update-organization-unit.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { BulkImportDto } from '../../common/dto/bulk-import.dto';
 
 @Controller('organization-units')
 export class OrganizationUnitController {
@@ -21,6 +22,13 @@ export class OrganizationUnitController {
   @RequirePermission('ENTITE_CREER')
   create(@Body() dto: CreateOrganizationUnitDto, @CurrentUser('employeeId') employeeId: string) {
     return this.service.create(dto, employeeId);
+  }
+
+  // Doit rester avant ':id' — sinon Nest matcherait POST /organization-units/bulk.
+  @Post('bulk')
+  @RequirePermission('ENTITE_CREER')
+  bulkCreate(@Body() dto: BulkImportDto, @CurrentUser('employeeId') employeeId: string) {
+    return this.service.bulkCreate(dto.items, employeeId);
   }
 
   @Get()

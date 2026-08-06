@@ -11,6 +11,7 @@ import { JobService } from './job.service';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { BulkImportDto } from '../../common/dto/bulk-import.dto';
 
 @Controller('jobs')
 export class JobController {
@@ -19,6 +20,12 @@ export class JobController {
   @Post()
   create(@Body() dto: CreateJobDto, @CurrentUser('employeeId') employeeId: string) {
     return this.service.create(dto, employeeId);
+  }
+
+  // Doit rester avant ':id' — sinon Nest matcherait POST /jobs/bulk.
+  @Post('bulk')
+  bulkCreate(@Body() dto: BulkImportDto, @CurrentUser('employeeId') employeeId: string) {
+    return this.service.bulkCreate(dto.items, employeeId);
   }
 
   @Get()

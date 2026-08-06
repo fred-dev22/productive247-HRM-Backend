@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateLeaveTypeDto } from './dto/create-leave-type.dto';
 import { UpdateLeaveTypeDto } from './dto/update-leave-type.dto';
 import { LeaveTransactionService } from '../leave-transaction/leave-transaction.service';
+import { bulkImport } from '../../common/utils/bulk-import.util';
 
 @Injectable()
 export class LeaveTypeService {
@@ -30,6 +31,13 @@ export class LeaveTypeService {
     }
 
     return leaveType;
+  }
+
+  // Import CSV (Lot D) — voir common/utils/bulk-import.util.ts. Passe par le
+  // meme create() ligne par ligne, donc CreditExistingEmployees (case a
+  // cocher deja existante) fonctionne aussi depuis un import.
+  bulkCreate(items: unknown[], createdBy: string) {
+    return bulkImport(items, CreateLeaveTypeDto, (dto) => this.create(dto, createdBy));
   }
 
   findAll() {

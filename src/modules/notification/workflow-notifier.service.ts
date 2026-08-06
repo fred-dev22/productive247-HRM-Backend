@@ -57,6 +57,12 @@ export interface WorkflowContext {
   referenceCode: string;
   beneficiaryId: string;
   creatorId: string;
+  // Description courte et lisible par un humain (ex: "Congé annuelle",
+  // "Antananarivo", "Frais de mission Q3") — utilisee dans les messages de
+  // notification/email a la place du ReferenceCode brut (voir decision du
+  // 06/08 : un code type DMD-2026-00001 ne veut rien dire pour l'utilisateur
+  // final). Calculee par chaque service metier dans son toContext().
+  summary: string;
   details?: EmailDetailRow[];
 }
 
@@ -134,7 +140,7 @@ export class WorkflowNotifierService {
     await this.notifyPeople([approver], {
       type: ctx.kind,
       title: 'Nouvelle demande à valider',
-      message: `${beneficiary.name} — ${ctx.referenceCode} en attente de votre validation`,
+      message: `${beneficiary.name} — ${ctx.summary} en attente de votre validation`,
       href: hrefToValidate(ctx),
     });
   }
@@ -153,13 +159,13 @@ export class WorkflowNotifierService {
     await this.notifyPeople([nextApprover], {
       type: ctx.kind,
       title: 'Nouvelle demande à valider',
-      message: `${beneficiary.name} — ${ctx.referenceCode} en attente de votre validation`,
+      message: `${beneficiary.name} — ${ctx.summary} en attente de votre validation`,
       href: hrefToValidate(ctx),
     });
     await this.notifyPeople([beneficiary, creator], {
       type: ctx.kind,
       title: 'Demande en cours de traitement',
-      message: `${KIND_LABEL[ctx.kind]} ${ctx.referenceCode} a été transmise au niveau de validation suivant`,
+      message: `${KIND_LABEL[ctx.kind]} (${ctx.summary}) a été transmise au niveau de validation suivant`,
       href: hrefMine(ctx),
     });
   }
@@ -176,8 +182,8 @@ export class WorkflowNotifierService {
     ]);
     const title = 'Demande approuvée';
     const message = opts.autoApproved
-      ? `${KIND_LABEL[ctx.kind]} ${ctx.referenceCode} est approuvée automatiquement (aucun niveau de validation restant applicable).`
-      : `${KIND_LABEL[ctx.kind]} ${ctx.referenceCode} a été approuvée.`;
+      ? `${KIND_LABEL[ctx.kind]} (${ctx.summary}) est approuvée automatiquement (aucun niveau de validation restant applicable).`
+      : `${KIND_LABEL[ctx.kind]} (${ctx.summary}) a été approuvée.`;
     await Promise.all([
       this.notifyPeople([beneficiary, creator], { type: ctx.kind, title, message, href: hrefMine(ctx) }),
       this.emailPeople([beneficiary, creator], { subject: title, message, accent: 'primary', chipLabel: 'Approuvée', ctx }),
@@ -191,7 +197,7 @@ export class WorkflowNotifierService {
       this.resolvePerson(ctx.creatorId),
     ]);
     const title = 'Demande refusée';
-    const message = `${KIND_LABEL[ctx.kind]} ${ctx.referenceCode} a été refusée. Motif : ${reason}`;
+    const message = `${KIND_LABEL[ctx.kind]} (${ctx.summary}) a été refusée. Motif : ${reason}`;
     await Promise.all([
       this.notifyPeople([beneficiary, creator], { type: ctx.kind, title, message, href: hrefMine(ctx) }),
       this.emailPeople([beneficiary, creator], { subject: title, message, accent: 'danger', chipLabel: 'Refusée', ctx }),
@@ -205,7 +211,7 @@ export class WorkflowNotifierService {
       this.resolvePerson(ctx.creatorId),
     ]);
     const title = 'Demande retournée pour correction';
-    const message = `${KIND_LABEL[ctx.kind]} ${ctx.referenceCode} a été retournée. Motif : ${reason}`;
+    const message = `${KIND_LABEL[ctx.kind]} (${ctx.summary}) a été retournée. Motif : ${reason}`;
     await Promise.all([
       this.notifyPeople([beneficiary, creator], { type: ctx.kind, title, message, href: hrefMine(ctx) }),
       this.emailPeople([beneficiary, creator], { subject: title, message, accent: 'warning', chipLabel: 'Retournée', ctx }),
@@ -225,7 +231,7 @@ export class WorkflowNotifierService {
     await this.notifyPeople([beneficiary, creator], {
       type: ctx.kind,
       title: 'Demande annulée',
-      message: `${KIND_LABEL[ctx.kind]} ${ctx.referenceCode} a été annulée par un administrateur.`,
+      message: `${KIND_LABEL[ctx.kind]} (${ctx.summary}) a été annulée par un administrateur.`,
       href: hrefMine(ctx),
     });
   }

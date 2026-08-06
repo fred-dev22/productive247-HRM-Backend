@@ -5,6 +5,7 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { LeaveTransactionService } from '../leave-transaction/leave-transaction.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { bulkImport } from '../../common/utils/bulk-import.util';
 
 type TxClient = Prisma.TransactionClient | PrismaService;
 
@@ -70,6 +71,14 @@ export class EmployeeService {
 
     this.realtime.broadcastCompany('data:changed', { domain: 'employee' });
     return employee;
+  }
+
+  // Import CSV (Lot D) — voir common/utils/bulk-import.util.ts. Passe par le
+  // meme create() ligne par ligne (donc EmployeeNumber auto-genere, credit
+  // initial des conges, verification de capacite du poste s'appliquent aussi
+  // depuis un import) — sequentiel, voir la doc de bulkImport().
+  bulkCreate(items: unknown[], createdBy: string) {
+    return bulkImport(items, CreateEmployeeDto, (dto) => this.create(dto, createdBy));
   }
 
   // IsSystem exclut le compte d'amorcage seede ("Admin Galana") — pas un

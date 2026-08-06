@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateHolidayDto } from './dto/create-holiday.dto';
 import { UpdateHolidayDto } from './dto/update-holiday.dto';
+import { bulkImport } from '../../common/utils/bulk-import.util';
 
 @Injectable()
 export class HolidayService {
@@ -9,6 +10,11 @@ export class HolidayService {
 
   create(dto: CreateHolidayDto, createdBy: string) {
     return this.prisma.holiday.create({ data: { ...dto, CreatedBy: createdBy } });
+  }
+
+  // Import CSV (Lot D) — voir common/utils/bulk-import.util.ts.
+  bulkCreate(items: unknown[], createdBy: string) {
+    return bulkImport(items, CreateHolidayDto, (dto) => this.create(dto, createdBy));
   }
 
   findAll() {

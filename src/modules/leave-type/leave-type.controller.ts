@@ -12,6 +12,7 @@ import { CreateLeaveTypeDto } from './dto/create-leave-type.dto';
 import { UpdateLeaveTypeDto } from './dto/update-leave-type.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { BulkImportDto } from '../../common/dto/bulk-import.dto';
 
 @Controller('leave-types')
 export class LeaveTypeController {
@@ -21,6 +22,13 @@ export class LeaveTypeController {
   @RequirePermission('CONFIG_TYPES_CONGE')
   create(@Body() dto: CreateLeaveTypeDto, @CurrentUser('employeeId') employeeId: string) {
     return this.service.create(dto, employeeId);
+  }
+
+  // Doit rester avant ':id' — sinon Nest matcherait POST /leave-types/bulk.
+  @Post('bulk')
+  @RequirePermission('CONFIG_TYPES_CONGE')
+  bulkCreate(@Body() dto: BulkImportDto, @CurrentUser('employeeId') employeeId: string) {
+    return this.service.bulkCreate(dto.items, employeeId);
   }
 
   @Get()

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePositionDto } from './dto/create-position.dto';
 import { UpdatePositionDto } from './dto/update-position.dto';
+import { bulkImport } from '../../common/utils/bulk-import.util';
 
 @Injectable()
 export class PositionService {
@@ -24,6 +25,11 @@ export class PositionService {
       ...this.withOccupiedCount(),
     });
     return this.mapCount(position);
+  }
+
+  // Import CSV (Lot D) — voir common/utils/bulk-import.util.ts.
+  bulkCreate(items: unknown[], createdBy: string) {
+    return bulkImport(items, CreatePositionDto, (dto) => this.create(dto, createdBy));
   }
 
   async findAll() {

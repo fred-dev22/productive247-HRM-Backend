@@ -1,4 +1,4 @@
-import { ArgumentsHost, Catch, ConflictException } from '@nestjs/common';
+import { ArgumentsHost, BadRequestException, Catch, ConflictException } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
 import { Prisma } from '../../../prisma/generated/client';
 import { Request } from 'express';
@@ -63,6 +63,58 @@ export function extractConflictingFields(
   return [];
 }
 
+// Libellés français des champs de clé étrangère, utilisés pour construire un
+// message clair à partir du nom de contrainte brut renvoyé par
+// PrismaClientKnownRequestError.meta (P2003) — ex : import CSV (Lot D)
+// référençant un poste/entité/métier/catégorie qui n'existe pas (ou plus).
+const FK_FIELD_LABELS: Record<string, string> = {
+  PositionId: 'Le poste indiqué',
+  OrganizationUnitId: "L'entité indiquée",
+  ParentId: "L'entité parente indiquée",
+  JobId: 'Le métier indiqué',
+  EmployeeCategoryId: 'La catégorie indiquée',
+  UserId: 'Le compte utilisateur indiqué',
+  ExpenseTypeId: 'Le type de frais indiqué',
+  LeaveTypeId: 'Le type de congé/absence indiqué',
+  CalendarId: 'Le calendrier indiqué',
+  ApprovalPoolId: "Le pool d'approbation indiqué",
+};
+
+// Meme logique de secours que extractConflictingFields (P2002) : le
+// connecteur SQL Server expose le nom brut de la contrainte FK plutot que le
+// champ nu — convention par defaut de Prisma `<Model>_<Champ>_fkey`.
+export function extractFkField(
+  meta: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!meta) return undefined;
+
+  const { field_name, constraint } = meta as {
+    field_name?: unknown;
+    constraint?: unknown;
+  };
+
+  const tryExtract = (raw: string): string => {
+    const match = raw.match(/_([A-Za-z]+)_fkey/);
+    return match ? match[1] : raw;
+  };
+
+  if (typeof field_name === 'string') return tryExtract(field_name);
+
+  if (constraint && typeof constraint === 'object') {
+    const index = (constraint as { index?: unknown }).index;
+    if (typeof index === 'string') return tryExtract(index);
+  }
+
+  return undefined;
+}
+
+export function buildFkMessage(field: string | undefined): string {
+  if (field && FK_FIELD_LABELS[field]) {
+    return `${FK_FIELD_LABELS[field]} n'existe pas ou plus.`;
+  }
+  return 'Une valeur référencée (entité, poste, catégorie…) est introuvable.';
+}
+
 function toDisplayValue(value: unknown): string | undefined {
   return typeof value === 'string' ||
     typeof value === 'number' ||
@@ -99,25 +151,33 @@ export function buildConflictMessage(
 
 /**
  * Filtre global qui transforme les erreurs Prisma connues en réponses HTTP
- * appropriées. Actuellement : P2002 (violation de contrainte unique) → 409
- * Conflict avec un message français identifiant le champ en conflit, plutôt
- * que le 500 Internal Server Error par défaut.
+ * appropriées au lieu du 500 Internal Server Error par défaut — notamment
+ * important pour l'import CSV (Lot D) où une ligne peut référencer un
+ * doublon ou une clé étrangère invalide/obsolète (voir bulkImport /
+ * ImportWizardModal.vue qui affichent ce message par ligne en échec) :
+ *  - P2002 (contrainte unique violée, ex: email/code déjà utilisé) → 409.
+ *  - P2003 (clé étrangère invalide, ex: entité/poste/catégorie inexistant) → 400.
  */
 @Catch(Prisma.PrismaClientKnownRequestError)
 export class PrismaExceptionFilter extends BaseExceptionFilter {
   catch(exception: Prisma.PrismaClientKnownRequestError, host: ArgumentsHost) {
-    if (exception.code !== 'P2002') {
-      super.catch(exception, host);
+    if (exception.code === 'P2002') {
+      const request = host.switchToHttp().getRequest<Request>();
+      const fields = extractConflictingFields(exception.meta);
+      const message = buildConflictMessage(
+        fields,
+        request?.body as Record<string, unknown> | undefined,
+      );
+      super.catch(new ConflictException(message), host);
       return;
     }
 
-    const request = host.switchToHttp().getRequest<Request>();
-    const fields = extractConflictingFields(exception.meta);
-    const message = buildConflictMessage(
-      fields,
-      request?.body as Record<string, unknown> | undefined,
-    );
+    if (exception.code === 'P2003') {
+      const field = extractFkField(exception.meta);
+      super.catch(new BadRequestException(buildFkMessage(field)), host);
+      return;
+    }
 
-    super.catch(new ConflictException(message), host);
+    super.catch(exception, host);
   }
 }

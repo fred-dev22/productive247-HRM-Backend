@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrganizationUnitDto } from './dto/create-organization-unit.dto';
 import { UpdateOrganizationUnitDto } from './dto/update-organization-unit.dto';
+import { bulkImport } from '../../common/utils/bulk-import.util';
 
 @Injectable()
 export class OrganizationUnitService {
@@ -9,6 +10,14 @@ export class OrganizationUnitService {
 
   create(dto: CreateOrganizationUnitDto, createdBy: string) {
     return this.prisma.organizationUnit.create({ data: { ...dto, CreatedBy: createdBy } });
+  }
+
+  // Import CSV (Lot D) — voir common/utils/bulk-import.util.ts. L'entite
+  // parente (ParentId) doit deja exister : pas de tri topologique ici, le
+  // frontend ne resout que par rapport aux entites deja chargees avant
+  // l'ouverture de l'import (voir message de dependance affiche a l'etape 1).
+  bulkCreate(items: unknown[], createdBy: string) {
+    return bulkImport(items, CreateOrganizationUnitDto, (dto) => this.create(dto, createdBy));
   }
 
   findAll() {

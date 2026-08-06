@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '../../../prisma/generated/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeCategoryDto } from './dto/create-employee-category.dto';
 import { UpdateEmployeeCategoryDto } from './dto/update-employee-category.dto';
 import { AddCategoryPermissionDto } from './dto/add-category-permission.dto';
+import { bulkImport } from '../../common/utils/bulk-import.util';
 
 @Injectable()
 export class EmployeeCategoryService {
@@ -14,6 +16,11 @@ export class EmployeeCategoryService {
 
   create(dto: CreateEmployeeCategoryDto, createdBy: string) {
     return this.prisma.employeeCategory.create({ data: { ...dto, CreatedBy: createdBy } });
+  }
+
+  // Import CSV (Lot D) — voir common/utils/bulk-import.util.ts.
+  bulkCreate(items: unknown[], createdBy: string) {
+    return bulkImport(items, CreateEmployeeCategoryDto, (dto) => this.create(dto, createdBy));
   }
 
   findAll() {
@@ -42,7 +49,16 @@ export class EmployeeCategoryService {
 
   async remove(id: string) {
     await this.findOne(id);
-    return this.prisma.employeeCategory.delete({ where: { Id: id } });
+    try {
+      return await this.prisma.employeeCategory.delete({ where: { Id: id } });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+        throw new ConflictException(
+          'Cette catégorie est encore utilisée par au moins un employé ou un compte utilisateur et ne peut pas être supprimée — réaffectez-les à une autre catégorie avant de la supprimer.',
+        );
+      }
+      throw err;
+    }
   }
 
   // Ce gabarit (CategoryPermission) n'est JAMAIS relu pour les comptes déjà

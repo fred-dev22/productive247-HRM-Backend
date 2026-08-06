@@ -56,6 +56,7 @@ export class LeaveRequestService {
       referenceCode: lr.ReferenceCode,
       beneficiaryId: lr.EmployeeId,
       creatorId: lr.CreatedBy,
+      summary: lr.leaveType?.Name ?? 'congé',
       details: [
         { label: 'Type de congé', value: lr.leaveType?.Name ?? '—' },
         { label: 'Du', value: formatDateFr(lr.StartDate) },

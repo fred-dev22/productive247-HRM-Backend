@@ -14,6 +14,7 @@ import { CreateHolidayDto } from './dto/create-holiday.dto';
 import { UpdateHolidayDto } from './dto/update-holiday.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { BulkImportDto } from '../../common/dto/bulk-import.dto';
 
 @Controller('holidays')
 export class HolidayController {
@@ -23,6 +24,13 @@ export class HolidayController {
   @RequirePermission('CONFIG_JOURS_FERIES')
   create(@Body() dto: CreateHolidayDto, @CurrentUser('employeeId') employeeId: string) {
     return this.service.create(dto, employeeId);
+  }
+
+  // Doit rester avant ':id' — sinon Nest matcherait POST /holidays/bulk.
+  @Post('bulk')
+  @RequirePermission('CONFIG_JOURS_FERIES')
+  bulkCreate(@Body() dto: BulkImportDto, @CurrentUser('employeeId') employeeId: string) {
+    return this.service.bulkCreate(dto.items, employeeId);
   }
 
   @Get()
