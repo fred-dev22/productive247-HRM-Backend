@@ -2,6 +2,8 @@ import { Body, Controller, Patch, Post } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Public } from './decorators/public.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 
@@ -20,5 +22,17 @@ export class AuthController {
   @Patch('change-password')
   changePassword(@CurrentUser('sub') userId: string, @Body() dto: ChangePasswordDto) {
     return this.authService.changePassword(userId, dto);
+  }
+
+  @Public()
+  @Post('forgot-password')
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto);
+  }
+
+  @Public()
+  @Post('reset-password')
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto);
   }
 }

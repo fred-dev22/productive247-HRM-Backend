@@ -133,6 +133,9 @@ export class LeaveRequestService {
     endDate: Date,
     organizationUnitId: string,
     employeeCategoryId: string | null,
+    isExpatriate = false,
+    startPeriod = 'full',
+    endPeriod = 'full',
   ): Promise<number> {
     if (endDate < startDate) {
       throw new BadRequestException('La date de fin doit être postérieure ou égale à la date de début');
@@ -145,6 +148,11 @@ export class LeaveRequestService {
 
     const holidays = await this.prisma.holiday.findMany();
     const applicableUnitIds = new Set(await this.collectAncestorUnitIds(organizationUnitId));
+
+    const isWorkingDay = (date: Date): boolean => {
+      const dayConfig = calendar.workDays.find((d) => d.DayOfWeek === DAY_KEYS[date.getDay()]);
+      return !!dayConfig?.IsEnabled && !isHoliday(date);
+    };
 
     const isHoliday = (date: Date): boolean => {
       const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -165,13 +173,46 @@ export class LeaveRequestService {
       });
     };
 
+    const sameDay = (a: Date, b: Date) =>
+      a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+    // Vrai si `date` est une absence complete au sens de la demande — seuls
+    // StartDate/EndDate peuvent porter une demi-journee (StartPeriod/
+    // EndPeriod != 'full'), tout jour strictement entre les deux est
+    // forcement une absence complete.
+    const isFullyAbsent = (date: Date): boolean => {
+      if (sameDay(date, startDate) && startPeriod !== 'full') return false;
+      if (sameDay(date, endDate) && endPeriod !== 'full') return false;
+      return true;
+    };
+
     let count = 0;
     const cur = new Date(startDate);
     while (cur <= endDate) {
-      const dayConfig = calendar.workDays.find((d) => d.DayOfWeek === DAY_KEYS[cur.getDay()]);
-      if (dayConfig?.IsEnabled && !isHoliday(cur)) count++;
+      if (isWorkingDay(cur)) {
+        const fullyAbsent = isFullyAbsent(cur);
+        count += fullyAbsent ? 1 : 0.5;
+
+        // Regime "local" (voir Employee.IsExpatriate) : un vendredi
+        // PLEINEMENT absent avale le week-end qui suit dans le decompte,
+        // meme si la demande continue au-dela (reunion Dominique du 12/06 —
+        // ex: conge vendredi->lundi = 3 jours pour un local, 1 seul pour un
+        // expatrie). Une simple demi-journee de presence le vendredi
+        // protege le week-end (voir isFullyAbsent). Verifie pour CHAQUE
+        // vendredi de la periode, pas seulement le dernier jour — une
+        // demande vendredi->mardi doit aussi avaler le week-end du milieu.
+        if (!isExpatriate && cur.getDay() === 5 && fullyAbsent) {
+          const cursor = new Date(cur);
+          cursor.setDate(cursor.getDate() + 1);
+          while (!isWorkingDay(cursor)) {
+            count++;
+            cursor.setDate(cursor.getDate() + 1);
+          }
+        }
+      }
       cur.setDate(cur.getDate() + 1);
     }
+
     return count;
   }
 
@@ -245,7 +286,12 @@ export class LeaveRequestService {
 
     const startDate = new Date(dto.StartDate);
     const endDate = new Date(dto.EndDate);
-    const daysCount = await this.computeWorkingDays(startDate, endDate, employee.OrganizationUnitId, employee.EmployeeCategoryId);
+    const startPeriod = dto.StartPeriod ?? 'full';
+    const endPeriod = dto.EndPeriod ?? 'full';
+    const daysCount = await this.computeWorkingDays(
+      startDate, endDate, employee.OrganizationUnitId, employee.EmployeeCategoryId,
+      employee.IsExpatriate, startPeriod, endPeriod,
+    );
     if (daysCount <= 0) {
       throw new BadRequestException("La période sélectionnée ne contient aucun jour ouvré");
     }
@@ -258,7 +304,9 @@ export class LeaveRequestService {
         EmployeeId: employeeId,
         LeaveTypeId: dto.LeaveTypeId,
         StartDate: startDate,
+        StartPeriod: startPeriod,
         EndDate: endDate,
+        EndPeriod: endPeriod,
         DaysCount: daysCount,
         Reason: dto.Reason,
         InterimEmployeeId: dto.InterimEmployeeId,
@@ -281,11 +329,16 @@ export class LeaveRequestService {
     const leaveTypeId = dto.LeaveTypeId ?? existing.LeaveTypeId;
     const startDate = dto.StartDate ? new Date(dto.StartDate) : existing.StartDate;
     const endDate = dto.EndDate ? new Date(dto.EndDate) : existing.EndDate;
+    const startPeriod = dto.StartPeriod ?? existing.StartPeriod;
+    const endPeriod = dto.EndPeriod ?? existing.EndPeriod;
 
     let daysCount = existing.DaysCount;
-    if (dto.StartDate || dto.EndDate) {
+    if (dto.StartDate || dto.EndDate || dto.StartPeriod || dto.EndPeriod) {
       const employee = await this.prisma.employee.findUniqueOrThrow({ where: { Id: existing.EmployeeId } });
-      daysCount = await this.computeWorkingDays(startDate, endDate, employee.OrganizationUnitId, employee.EmployeeCategoryId) as unknown as typeof existing.DaysCount;
+      daysCount = await this.computeWorkingDays(
+        startDate, endDate, employee.OrganizationUnitId, employee.EmployeeCategoryId,
+        employee.IsExpatriate, startPeriod, endPeriod,
+      ) as unknown as typeof existing.DaysCount;
     }
 
     return this.prisma.leaveRequest.update({
@@ -293,7 +346,9 @@ export class LeaveRequestService {
       data: {
         LeaveTypeId: leaveTypeId,
         StartDate: startDate,
+        StartPeriod: startPeriod,
         EndDate: endDate,
+        EndPeriod: endPeriod,
         DaysCount: daysCount,
         Reason: dto.Reason,
         InterimEmployeeId: dto.InterimEmployeeId,

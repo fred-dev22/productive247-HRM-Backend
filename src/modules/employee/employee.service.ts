@@ -104,6 +104,10 @@ export class EmployeeService {
         EmployeeNumber: true,
         OrganizationUnitId: true,
         EmployeeCategoryId: true,
+        // Necessaire au calcul (cote frontend, apercu avant soumission) de
+        // l'ajout du week-end au decompte de conges pour un beneficiaire
+        // "local" — voir utils/calendar.ts et computeWorkingDays.
+        IsExpatriate: true,
       },
       orderBy: { FullName: 'asc' },
     });

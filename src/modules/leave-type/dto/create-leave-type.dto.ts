@@ -49,8 +49,8 @@ export class CreateLeaveTypeDto {
   CarryOverCap?: number;
 
   @IsOptional()
-  @IsInt()
-  @Min(0)
+  @IsInt({ message: 'Le préavis minimum doit être un nombre entier de jours' })
+  @Min(0, { message: 'Le préavis minimum ne peut pas être négatif' })
   MinNoticeDays?: number;
 
   @IsString()

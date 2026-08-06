@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCalendarDto } from './dto/create-calendar.dto';
 import { UpdateCalendarDto } from './dto/update-calendar.dto';
+import { CalendarWorkDayDto } from './dto/calendar-work-day.dto';
 
 const WORK_DAYS_INCLUDE = {
   workDays: true,
@@ -13,7 +14,37 @@ const WORK_DAYS_INCLUDE = {
 export class CalendarService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // Le DTO valide chaque champ isolément (class-validator n'a pas de contexte
+  // inter-champs facile ici) — la coherence Start/End/Break se verifie donc
+  // manuellement avant persistance, sinon un jour "fin avant debut" passait
+  // silencieusement (voir test #03 du plan de tests).
+  private validateWorkDays(workDays?: CalendarWorkDayDto[]) {
+    if (!workDays) return;
+    for (const day of workDays) {
+      if (!day.IsEnabled) continue;
+      if (day.StartTime && day.EndTime && day.EndTime <= day.StartTime) {
+        throw new BadRequestException(
+          `${day.DayOfWeek} : l'heure de fin doit être après l'heure de début`,
+        );
+      }
+      if (day.BreakEnabled && day.BreakStartTime && day.BreakEndTime) {
+        if (day.BreakEndTime <= day.BreakStartTime) {
+          throw new BadRequestException(`${day.DayOfWeek} : la pause doit finir après avoir commencé`);
+        }
+        if (day.StartTime && day.BreakStartTime < day.StartTime) {
+          throw new BadRequestException(
+            `${day.DayOfWeek} : la pause ne peut pas commencer avant l'heure de début`,
+          );
+        }
+        if (day.EndTime && day.BreakEndTime > day.EndTime) {
+          throw new BadRequestException(`${day.DayOfWeek} : la pause ne peut pas finir après l'heure de fin`);
+        }
+      }
+    }
+  }
+
   async create(dto: CreateCalendarDto, createdBy: string) {
+    this.validateWorkDays(dto.WorkDays);
     return this.prisma.$transaction(async (tx) => {
       // Un seul calendrier par defaut a la fois — sans ca, en creer un second
       // avec IsDefault:true laisserait deux lignes a true en base et
@@ -86,6 +117,7 @@ export class CalendarService {
 
   async update(id: string, dto: UpdateCalendarDto, modifiedBy: string) {
     await this.findOne(id);
+    this.validateWorkDays(dto.WorkDays);
     return this.prisma.$transaction(async (tx) => {
       if (dto.IsDefault) {
         await tx.calendar.updateMany({

@@ -180,6 +180,12 @@ model Employee {
   UserId String? @unique @db.UniqueIdentifier
   // Status: Active | OnTrial | OnLeave | Inactive
   Status String  @db.NVarChar(10)
+  // Regime de conges (reunion Dominique du 12/06) : un employe "local" qui
+  // est absent tout le vendredi precedant un week-end voit ce week-end aussi
+  // decompte de son solde (ex: conge pris vendredi->lundi = 3 jours), pas un
+  // "expatrie" (voir leave-request.service.ts computeWorkingDays). false par
+  // defaut = regime local, le plus repandu chez Galana Madagascar.
+  IsExpatriate Boolean @default(false)
   // Compte d'amorçage cree par le seed (ex : "Admin Galana"), pas un vrai
   // membre du personnel — ne doit jamais apparaitre comme option dans un
   // selecteur (beneficiaire, interimaire, validateur, responsable...), voir
@@ -293,6 +299,12 @@ model User {
   // POST /users), remis à false par PATCH /auth/change-password.
   MustChangePassword Boolean   @default(true)
   LastLoginAt        DateTime? @db.DateTime2
+
+  // Mot de passe oublié — jeton a usage unique, jamais stocké en clair (voir
+  // AuthService.forgotPassword). Expire (voir ResetPasswordExpiresAt) ; vidé
+  // après un reset réussi ou l'émission d'un nouveau jeton.
+  ResetPasswordTokenHash String?   @db.NVarChar(255)
+  ResetPasswordExpiresAt DateTime? @db.DateTime2
 
   // Categorie attribuee a l'activation de l'acces systeme (voir
   // Employee.UserId) — la MEME EmployeeCategory que celle utilisee pour le
@@ -705,7 +717,15 @@ model LeaveRequest {
   EmployeeId          String   @db.UniqueIdentifier
   LeaveTypeId         String   @db.UniqueIdentifier
   StartDate           DateTime @db.Date
+  // StartPeriod/EndPeriod : full | am | pm — une demande d'une seule demi-
+  // journee a StartDate == EndDate avec un des deux a "am"/"pm". Necessaire
+  // pour la regle du vendredi/week-end (voir computeWorkingDays) : chez un
+  // employe local, une presence meme partielle le vendredi protege le
+  // week-end suivant du decompte — sans ce champ, impossible a distinguer
+  // d'une absence complete.
+  StartPeriod         String   @default("full") @db.NVarChar(4)
   EndDate             DateTime @db.Date
+  EndPeriod           String   @default("full") @db.NVarChar(4)
   DaysCount           Decimal  @db.Decimal(5, 2)
   Reason              String?  @db.NVarChar(500)
   InterimEmployeeId   String?  @db.UniqueIdentifier
@@ -860,10 +880,11 @@ model ExpenseLine {
 /// de "categorie", modifiable/ajoutable librement par un Directeur RH (voir
 /// decision du 29/07 — "role et categorie c'est la meme chose").
 model EmployeeCategory {
-  Id       String  @id @default(uuid()) @db.UniqueIdentifier
-  Code     String  @unique @db.NVarChar(20)
-  Name     String  @db.NVarChar(100)
-  IsActive Boolean @default(true)
+  Id          String  @id @default(uuid()) @db.UniqueIdentifier
+  Code        String  @unique @db.NVarChar(20)
+  Name        String  @db.NVarChar(100)
+  Description String? @db.NVarChar(255)
+  IsActive    Boolean @default(true)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2

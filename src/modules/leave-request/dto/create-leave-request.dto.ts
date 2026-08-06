@@ -1,4 +1,4 @@
-import { IsDateString, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsDateString, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class CreateLeaveRequestDto {
   // Optionnel : par defaut la demande est creee pour l'utilisateur courant.
@@ -14,8 +14,17 @@ export class CreateLeaveRequestDto {
   @IsDateString()
   StartDate: string;
 
+  // full | am | pm — voir LeaveRequest.StartPeriod (schema.prisma).
+  @IsOptional()
+  @IsIn(['full', 'am', 'pm'])
+  StartPeriod?: string;
+
   @IsDateString()
   EndDate: string;
+
+  @IsOptional()
+  @IsIn(['full', 'am', 'pm'])
+  EndPeriod?: string;
 
   @IsOptional()
   @IsString()

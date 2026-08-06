@@ -18,6 +18,11 @@ export class CreateEmployeeCategoryDto {
   Name: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  Description?: string;
+
+  @IsOptional()
   @IsBoolean()
   IsActive?: boolean;
 }

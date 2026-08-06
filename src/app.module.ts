@@ -25,6 +25,7 @@ import { MissionOrderModule } from './modules/mission-order/mission-order.module
 import { ExpenseReportModule } from './modules/expense-report/expense-report.module';
 import { MailModule } from './modules/mail/mail.module';
 import { NotificationModule } from './modules/notification/notification.module';
+import { AttachmentModule } from './modules/attachment/attachment.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { NotificationModule } from './modules/notification/notification.module';
     ExpenseReportModule,
     MailModule,
     NotificationModule,
+    AttachmentModule,
   ],
   controllers: [AppController],
   providers: [AppService],

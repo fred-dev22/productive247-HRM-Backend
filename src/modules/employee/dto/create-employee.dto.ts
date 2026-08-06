@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsDate,
   IsEmail,
   IsIn,
@@ -90,4 +91,9 @@ export class CreateEmployeeDto {
 
   @IsIn(['Active', 'OnTrial', 'OnLeave', 'Inactive'])
   Status: string;
+
+  // Regime de conges — voir Employee.IsExpatriate (schema.prisma).
+  @IsOptional()
+  @IsBoolean()
+  IsExpatriate?: boolean;
 }
