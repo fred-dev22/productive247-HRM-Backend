@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
+import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
 import { CreateExpenseReportDto } from './dto/create-expense-report.dto';
 import { UpdateExpenseReportDto } from './dto/update-expense-report.dto';
 import { DecideExpenseReportDto } from './dto/decide-expense-report.dto';
@@ -29,9 +30,28 @@ export class ExpenseReportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly approvalPoolService: ApprovalPoolService,
+    private readonly notifier: WorkflowNotifierService,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────
+
+  private toContext(report: {
+    Id: string; ReferenceCode: string; EmployeeId: string; CreatedBy: string;
+    Title: string; Currency: string; lines?: { Amount: unknown }[];
+  }): WorkflowContext {
+    const total = this.computeTotal(report.lines ?? []);
+    return {
+      kind: 'expense',
+      id: report.Id,
+      referenceCode: report.ReferenceCode,
+      beneficiaryId: report.EmployeeId,
+      creatorId: report.CreatedBy,
+      details: [
+        { label: 'Titre', value: report.Title },
+        { label: 'Montant total', value: `${total.toLocaleString('fr-FR')} ${report.Currency}` },
+      ],
+    };
+  }
 
   private async generateReferenceCode(): Promise<string> {
     const year = new Date().getFullYear();
@@ -327,7 +347,7 @@ export class ExpenseReportService {
     const candidateMembers = sortedMembers.filter((m) => m.StepOrder > beneficiaryOwnLevel);
     const applicable = await this.findApplicableStep(candidateMembers, beneficiaryEmployeeId);
     if (!applicable) {
-      return this.prisma.expenseReport.update({
+      const updated = await this.prisma.expenseReport.update({
         where: { Id: id },
         data: {
           Status: 'Approved', ApprovalPoolId: pool.Id, RejectionReason: null,
@@ -335,10 +355,12 @@ export class ExpenseReportService {
         },
         include: REPORT_INCLUDE,
       });
+      await this.notifier.notifyApproved(this.toContext(existing), { autoApproved: true });
+      return updated;
     }
 
     const { member: firstStep, approverId } = applicable;
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.expenseReport.update({
         where: { Id: id },
         data: {
@@ -365,6 +387,8 @@ export class ExpenseReportService {
       });
       return updated;
     });
+    await this.notifier.notifySubmitted(this.toContext(existing), approverId);
+    return updated;
   }
 
   private async assertIsCurrentApprover(
@@ -409,7 +433,7 @@ export class ExpenseReportService {
       .sort((a, b) => a.StepOrder - b.StepOrder);
     const applicable = await this.findApplicableStep(remainingMembers, existing.EmployeeId);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.approvalDecision.update({
         where: { Id: pendingDecision.Id },
         data: {
@@ -438,11 +462,19 @@ export class ExpenseReportService {
             CreatedBy: approverEmployeeId,
           },
         });
-        return updated;
+        return { updated, nextApproverId: approverId as string | null };
       }
 
-      return tx.expenseReport.update({ where: { Id: id }, data: { Status: 'Approved' }, include: REPORT_INCLUDE });
+      const updated = await tx.expenseReport.update({ where: { Id: id }, data: { Status: 'Approved' }, include: REPORT_INCLUDE });
+      return { updated, nextApproverId: null };
     });
+
+    if (result.nextApproverId) {
+      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId);
+    } else {
+      await this.notifier.notifyApproved(this.toContext(existing), { autoApproved: false });
+    }
+    return result.updated;
   }
 
   async reject(id: string, dto: DecideExpenseReportDto, approverEmployeeId: string, canOverride: boolean) {
@@ -451,7 +483,9 @@ export class ExpenseReportService {
     }
     const existing = await this.findOneRaw(id);
     await this.assertIsCurrentApprover(existing, approverEmployeeId, canOverride);
-    return this.closeApprovalStep(existing, 'Rejected', dto.Comment, approverEmployeeId);
+    const updated = await this.closeApprovalStep(existing, 'Rejected', dto.Comment, approverEmployeeId);
+    await this.notifier.notifyRejected(this.toContext(existing), dto.Comment);
+    return updated;
   }
 
   async return_(id: string, dto: DecideExpenseReportDto, approverEmployeeId: string, canOverride: boolean) {
@@ -460,7 +494,9 @@ export class ExpenseReportService {
     }
     const existing = await this.findOneRaw(id);
     await this.assertIsCurrentApprover(existing, approverEmployeeId, canOverride);
-    return this.closeApprovalStep(existing, 'Returned', dto.Comment, approverEmployeeId);
+    const updated = await this.closeApprovalStep(existing, 'Returned', dto.Comment, approverEmployeeId);
+    await this.notifier.notifyReturned(this.toContext(existing), dto.Comment);
+    return updated;
   }
 
   private async closeApprovalStep(
@@ -501,10 +537,12 @@ export class ExpenseReportService {
     if (!CANCELLABLE_STATUSES.includes(existing.Status)) {
       throw new BadRequestException(`Une note au statut "${existing.Status}" ne peut plus être annulée`);
     }
-    return this.prisma.expenseReport.update({
+    const updated = await this.prisma.expenseReport.update({
       where: { Id: id },
       data: { Status: 'Cancelled', ModifiedBy: requesterEmployeeId, ModifiedAt: new Date() },
       include: REPORT_INCLUDE,
     });
+    await this.notifier.notifyCancelled(this.toContext(existing), requesterEmployeeId);
+    return updated;
   }
 }

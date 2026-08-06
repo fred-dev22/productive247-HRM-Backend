@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
+import { renderEmailHtml, frontendOrigin } from '../mail/email-templates';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AssignCategoryDto } from './dto/assign-category.dto';
@@ -10,7 +12,10 @@ const SALT_ROUNDS = 10;
 
 @Injectable()
 export class UserService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+  ) {}
 
   private sanitize<T extends { PasswordHash?: string }>(user: T) {
     const { PasswordHash, ...rest } = user;
@@ -44,7 +49,7 @@ export class UserService {
 
     const PasswordHash = await bcrypt.hash(Password, SALT_ROUNDS);
 
-    return this.prisma.$transaction(async (tx) => {
+    const user = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: { ...rest, EmployeeCategoryId, PasswordHash },
       });
@@ -58,8 +63,38 @@ export class UserService {
         });
       }
       await tx.employee.update({ where: { Id: EmployeeId }, data: { UserId: user.Id } });
-      return this.sanitize(user);
+      return user;
     });
+
+    const title = 'Votre compte Productive 247 HRM a été créé';
+    await this.mail.send({
+      to: user.Email,
+      subject: title,
+      html: renderEmailHtml({
+        accent: 'primary',
+        chipLabel: 'Compte créé',
+        title,
+        bodyLines: [
+          `Bonjour ${employee.FirstName},`,
+          `Un compte vous a été créé sur Productive 247 HRM.`,
+          // Ne jamais affirmer un changement obligatoire si l'admin RH a
+          // decoche cette option a la creation (voir CreateUserAccountDialog.vue
+          // form.mustChangePassword) — le mot de passe reste alors valable
+          // tel quel jusqu'a ce que l'utilisateur decide lui-meme de le changer.
+          dto.MustChangePassword
+            ? `Vous devrez le changer dès votre première connexion.`
+            : `Vous pourrez le modifier à tout moment depuis votre profil.`,
+        ],
+        details: [
+          { label: 'Identifiant', value: user.Username },
+          { label: 'Mot de passe temporaire', value: Password },
+        ],
+        ctaLabel: 'Se connecter',
+        ctaHref: `${frontendOrigin()}/login`,
+      }),
+    });
+
+    return this.sanitize(user);
   }
 
   async findAll() {
@@ -86,6 +121,33 @@ export class UserService {
       data.PasswordHash = await bcrypt.hash(Password, SALT_ROUNDS);
     }
     const user = await this.prisma.user.update({ where: { Id: id }, data });
+    if (Password) {
+      // Reinitialisation par un admin (pas d'auto-service, voir
+      // AuthService.changePassword pour ce cas) — le nouveau mot de passe
+      // temporaire doit etre communique par un canal que l'utilisateur peut
+      // consulter meme sans pouvoir encore se connecter.
+      const title = 'Votre mot de passe a été réinitialisé';
+      await this.mail.send({
+        to: user.Email,
+        subject: title,
+        html: renderEmailHtml({
+          accent: 'warning',
+          chipLabel: 'Mot de passe réinitialisé',
+          title,
+          bodyLines: [
+            `Bonjour,`,
+            `Le mot de passe de votre compte (${user.Username}) a été réinitialisé par un administrateur.`,
+            dto.MustChangePassword
+              ? `Vous devrez le changer dès votre prochaine connexion.`
+              : `Vous pourrez le modifier à tout moment depuis votre profil.`,
+            `Si vous n'êtes pas à l'origine de cette demande, contactez immédiatement le service RH.`,
+          ],
+          details: [{ label: 'Nouveau mot de passe temporaire', value: Password }],
+          ctaLabel: 'Se connecter',
+          ctaHref: `${frontendOrigin()}/login`,
+        }),
+      });
+    }
     return this.sanitize(user);
   }
 

@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { LeaveTransactionService } from '../leave-transaction/leave-transaction.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 type TxClient = Prisma.TransactionClient | PrismaService;
 
@@ -14,6 +15,7 @@ export class EmployeeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly leaveTransactionService: LeaveTransactionService,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   // Matricule genere cote serveur (compte les EmployeeNumber "EMP..." existants,
@@ -66,6 +68,7 @@ export class EmployeeService {
       this.logger.warn(`Crédit initial des congés échoué pour l'employé ${employee.Id} : ${err.message}`);
     });
 
+    this.realtime.broadcastCompany('data:changed', { domain: 'employee' });
     return employee;
   }
 
@@ -194,9 +197,11 @@ export class EmployeeService {
   // passées) qui pointent vers cet Id.
   async remove(id: string) {
     await this.findOne(id);
-    return this.prisma.employee.update({
+    const employee = await this.prisma.employee.update({
       where: { Id: id },
       data: { Status: 'Inactive', PositionId: null, ModifiedAt: new Date() },
     });
+    this.realtime.broadcastCompany('data:changed', { domain: 'employee' });
+    return employee;
   }
 }

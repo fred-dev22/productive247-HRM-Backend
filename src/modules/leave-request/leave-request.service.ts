@@ -7,6 +7,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
 import { LeaveTransactionService } from '../leave-transaction/leave-transaction.service';
+import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
+import { formatDateFr } from '../mail/email-templates';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { UpdateLeaveRequestDto } from './dto/update-leave-request.dto';
 import { DecideLeaveRequestDto } from './dto/decide-leave-request.dto';
@@ -39,9 +41,29 @@ export class LeaveRequestService {
     private readonly prisma: PrismaService,
     private readonly approvalPoolService: ApprovalPoolService,
     private readonly leaveTransactionService: LeaveTransactionService,
+    private readonly notifier: WorkflowNotifierService,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────
+
+  private toContext(lr: {
+    Id: string; ReferenceCode: string; EmployeeId: string; CreatedBy: string;
+    StartDate: Date; EndDate: Date; DaysCount: unknown; leaveType?: { Name: string } | null;
+  }): WorkflowContext {
+    return {
+      kind: 'leave',
+      id: lr.Id,
+      referenceCode: lr.ReferenceCode,
+      beneficiaryId: lr.EmployeeId,
+      creatorId: lr.CreatedBy,
+      details: [
+        { label: 'Type de congé', value: lr.leaveType?.Name ?? '—' },
+        { label: 'Du', value: formatDateFr(lr.StartDate) },
+        { label: 'Au', value: formatDateFr(lr.EndDate) },
+        { label: 'Durée', value: `${Number(lr.DaysCount)} jour(s)` },
+      ],
+    };
+  }
 
   private async generateReferenceCode(): Promise<string> {
     const year = new Date().getFullYear();
@@ -515,7 +537,7 @@ export class LeaveRequestService {
     const candidateMembers = sortedMembers.filter((m) => m.StepOrder > beneficiaryOwnLevel);
     const applicable = await this.findApplicableStep(candidateMembers, beneficiaryEmployeeId);
     if (!applicable) {
-      return this.prisma.$transaction(async (tx) => {
+      const updated = await this.prisma.$transaction(async (tx) => {
         const updated = await tx.leaveRequest.update({
           where: { Id: leaveRequest.Id },
           data: {
@@ -530,10 +552,12 @@ export class LeaveRequestService {
         );
         return updated;
       });
+      await this.notifier.notifyApproved(this.toContext(leaveRequest), { autoApproved: true });
+      return updated;
     }
 
     const { member: firstStep, approverId } = applicable;
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.leaveRequest.update({
         where: { Id: leaveRequest.Id },
         data: {
@@ -559,6 +583,8 @@ export class LeaveRequestService {
       });
       return updated;
     });
+    await this.notifier.notifySubmitted(this.toContext(leaveRequest), approverId);
+    return updated;
   }
 
   private async assertIsCurrentApprover(
@@ -606,7 +632,7 @@ export class LeaveRequestService {
       .sort((a, b) => a.StepOrder - b.StepOrder);
     const applicable = await this.findApplicableStep(remainingMembers, existing.EmployeeId);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.approvalDecision.update({
         where: { Id: pendingDecision.Id },
         data: {
@@ -635,7 +661,7 @@ export class LeaveRequestService {
             CreatedBy: approverEmployeeId,
           },
         });
-        return updated;
+        return { updated, nextApproverId: approverId as string | null };
       }
 
       const updated = await tx.leaveRequest.update({
@@ -652,8 +678,15 @@ export class LeaveRequestService {
         existing.Id,
         tx,
       );
-      return updated;
+      return { updated, nextApproverId: null };
     });
+
+    if (result.nextApproverId) {
+      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId);
+    } else {
+      await this.notifier.notifyApproved(this.toContext(existing), { autoApproved: false });
+    }
+    return result.updated;
   }
 
   async reject(id: string, dto: DecideLeaveRequestDto, approverEmployeeId: string, canOverride: boolean) {
@@ -662,7 +695,9 @@ export class LeaveRequestService {
     }
     const existing = await this.findOneRaw(id);
     await this.assertIsCurrentApprover(existing, approverEmployeeId, canOverride);
-    return this.closeApprovalStep(existing, 'Rejected', dto.Comment, approverEmployeeId);
+    const updated = await this.closeApprovalStep(existing, 'Rejected', dto.Comment, approverEmployeeId);
+    await this.notifier.notifyRejected(this.toContext(existing), dto.Comment);
+    return updated;
   }
 
   async return_(id: string, dto: DecideLeaveRequestDto, approverEmployeeId: string, canOverride: boolean) {
@@ -671,7 +706,9 @@ export class LeaveRequestService {
     }
     const existing = await this.findOneRaw(id);
     await this.assertIsCurrentApprover(existing, approverEmployeeId, canOverride);
-    return this.closeApprovalStep(existing, 'Returned', dto.Comment, approverEmployeeId);
+    const updated = await this.closeApprovalStep(existing, 'Returned', dto.Comment, approverEmployeeId);
+    await this.notifier.notifyReturned(this.toContext(existing), dto.Comment);
+    return updated;
   }
 
   private async closeApprovalStep(
@@ -722,7 +759,7 @@ export class LeaveRequestService {
 
     const balanceWasDebited = existing.Status === 'Approved' || existing.Status === 'Registered';
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.leaveRequest.update({
         where: { Id: id },
         data: { Status: 'Cancelled', ModifiedBy: requesterEmployeeId, ModifiedAt: new Date() },
@@ -741,6 +778,8 @@ export class LeaveRequestService {
       }
       return updated;
     });
+    await this.notifier.notifyCancelled(this.toContext(existing), requesterEmployeeId);
+    return updated;
   }
 
   async markDone(id: string, requesterEmployeeId: string) {

@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
+import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
+import { formatDateFr } from '../mail/email-templates';
 import { CreateMissionOrderDto } from './dto/create-mission-order.dto';
 import { UpdateMissionOrderDto } from './dto/update-mission-order.dto';
 import { DecideMissionOrderDto } from './dto/decide-mission-order.dto';
@@ -39,9 +41,29 @@ export class MissionOrderService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly approvalPoolService: ApprovalPoolService,
+    private readonly notifier: WorkflowNotifierService,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────
+
+  private toContext(mo: {
+    Id: string; ReferenceCode: string; EmployeeId: string; CreatedBy: string;
+    Destination: string; DepartureDate: Date; ReturnDate: Date; DaysCount: unknown;
+  }): WorkflowContext {
+    return {
+      kind: 'mission',
+      id: mo.Id,
+      referenceCode: mo.ReferenceCode,
+      beneficiaryId: mo.EmployeeId,
+      creatorId: mo.CreatedBy,
+      details: [
+        { label: 'Destination', value: mo.Destination },
+        { label: 'Départ', value: formatDateFr(mo.DepartureDate) },
+        { label: 'Retour', value: formatDateFr(mo.ReturnDate) },
+        { label: 'Durée', value: `${Number(mo.DaysCount)} jour(s)` },
+      ],
+    };
+  }
 
   private async generateReferenceCode(): Promise<string> {
     const year = new Date().getFullYear();
@@ -414,7 +436,7 @@ export class MissionOrderService {
     const candidateMembers = sortedMembers.filter((m) => m.StepOrder > beneficiaryOwnLevel);
     const applicable = await this.findApplicableStep(candidateMembers, beneficiaryEmployeeId);
     if (!applicable) {
-      return this.prisma.missionOrder.update({
+      const updated = await this.prisma.missionOrder.update({
         where: { Id: id },
         data: {
           Status: 'Approved', ApprovalPoolId: pool.Id, RejectionReason: null,
@@ -422,10 +444,12 @@ export class MissionOrderService {
         },
         include: MISSION_EMPLOYEE_INCLUDE,
       });
+      await this.notifier.notifyApproved(this.toContext(existing), { autoApproved: true });
+      return updated;
     }
 
     const { member: firstStep, approverId } = applicable;
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.missionOrder.update({
         where: { Id: id },
         data: {
@@ -451,6 +475,8 @@ export class MissionOrderService {
       });
       return updated;
     });
+    await this.notifier.notifySubmitted(this.toContext(existing), approverId);
+    return updated;
   }
 
   private async assertIsCurrentApprover(
@@ -495,7 +521,7 @@ export class MissionOrderService {
       .sort((a, b) => a.StepOrder - b.StepOrder);
     const applicable = await this.findApplicableStep(remainingMembers, existing.EmployeeId);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.approvalDecision.update({
         where: { Id: pendingDecision.Id },
         data: {
@@ -524,11 +550,19 @@ export class MissionOrderService {
             CreatedBy: approverEmployeeId,
           },
         });
-        return updated;
+        return { updated, nextApproverId: approverId as string | null };
       }
 
-      return tx.missionOrder.update({ where: { Id: id }, data: { Status: 'Approved' }, include: MISSION_EMPLOYEE_INCLUDE });
+      const updated = await tx.missionOrder.update({ where: { Id: id }, data: { Status: 'Approved' }, include: MISSION_EMPLOYEE_INCLUDE });
+      return { updated, nextApproverId: null };
     });
+
+    if (result.nextApproverId) {
+      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId);
+    } else {
+      await this.notifier.notifyApproved(this.toContext(existing), { autoApproved: false });
+    }
+    return result.updated;
   }
 
   async reject(id: string, dto: DecideMissionOrderDto, approverEmployeeId: string, canOverride: boolean) {
@@ -537,7 +571,9 @@ export class MissionOrderService {
     }
     const existing = await this.findOneRaw(id);
     await this.assertIsCurrentApprover(existing, approverEmployeeId, canOverride);
-    return this.closeApprovalStep(existing, 'Rejected', dto.Comment, approverEmployeeId);
+    const updated = await this.closeApprovalStep(existing, 'Rejected', dto.Comment, approverEmployeeId);
+    await this.notifier.notifyRejected(this.toContext(existing), dto.Comment);
+    return updated;
   }
 
   async return_(id: string, dto: DecideMissionOrderDto, approverEmployeeId: string, canOverride: boolean) {
@@ -546,7 +582,9 @@ export class MissionOrderService {
     }
     const existing = await this.findOneRaw(id);
     await this.assertIsCurrentApprover(existing, approverEmployeeId, canOverride);
-    return this.closeApprovalStep(existing, 'Returned', dto.Comment, approverEmployeeId);
+    const updated = await this.closeApprovalStep(existing, 'Returned', dto.Comment, approverEmployeeId);
+    await this.notifier.notifyReturned(this.toContext(existing), dto.Comment);
+    return updated;
   }
 
   private async closeApprovalStep(
@@ -587,10 +625,12 @@ export class MissionOrderService {
     if (!CANCELLABLE_STATUSES.includes(existing.Status)) {
       throw new BadRequestException(`Un ordre au statut "${existing.Status}" ne peut plus être annulé`);
     }
-    return this.prisma.missionOrder.update({
+    const updated = await this.prisma.missionOrder.update({
       where: { Id: id },
       data: { Status: 'Cancelled', ModifiedBy: requesterEmployeeId, ModifiedAt: new Date() },
       include: MISSION_EMPLOYEE_INCLUDE,
     });
+    await this.notifier.notifyCancelled(this.toContext(existing), requesterEmployeeId);
+    return updated;
   }
 }

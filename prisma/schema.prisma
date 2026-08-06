@@ -272,6 +272,8 @@ model Employee {
 
   categoryPermissionsGranted CategoryPermission[] @relation("CategoryPermissionCreatedBy")
 
+  notifications Notification[]
+
   @@index([PositionId])
   @@index([OrganizationUnitId])
 }
@@ -952,4 +954,26 @@ model Attachment {
   createdByEmployee Employee @relation("AttachmentCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([EntityType, EntityId])
+}
+
+// =========================================================================
+// NOTIFICATIONS (Lot E)
+// =========================================================================
+
+/// Notification in-app (cloche) — destinataire unique par ligne, pas de
+/// diffusion groupee. Href pointe vers l'ecran concerne (ex: /hr/absences).
+model Notification {
+  Id         String   @id @default(uuid()) @db.UniqueIdentifier
+  EmployeeId String   @db.UniqueIdentifier
+  // Type: leave | mission | expense | system — pilote l'icone cote frontend.
+  Type       String   @db.NVarChar(20)
+  Title      String   @db.NVarChar(150)
+  Message    String   @db.NVarChar(500)
+  Href       String?  @db.NVarChar(200)
+  IsRead     Boolean  @default(false)
+  CreatedAt  DateTime @default(now()) @db.DateTime2
+
+  employee Employee @relation(fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([EmployeeId])
 }

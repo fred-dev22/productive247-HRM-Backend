@@ -23,6 +23,8 @@ import { LeaveRequestModule } from './modules/leave-request/leave-request.module
 import { LeaveTransactionModule } from './modules/leave-transaction/leave-transaction.module';
 import { MissionOrderModule } from './modules/mission-order/mission-order.module';
 import { ExpenseReportModule } from './modules/expense-report/expense-report.module';
+import { MailModule } from './modules/mail/mail.module';
+import { NotificationModule } from './modules/notification/notification.module';
 
 @Module({
   imports: [
@@ -48,6 +50,8 @@ import { ExpenseReportModule } from './modules/expense-report/expense-report.mod
     LeaveTransactionModule,
     MissionOrderModule,
     ExpenseReportModule,
+    MailModule,
+    NotificationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

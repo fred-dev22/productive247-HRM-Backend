@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '../../../prisma/generated/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationService } from '../notification/notification.service';
 
 type TxClient = Prisma.TransactionClient | PrismaService;
 
@@ -10,7 +11,10 @@ const SYSTEM_ACTOR_LABEL = 'Génération automatique des acquisitions';
 export class LeaveTransactionService {
   private readonly logger = new Logger(LeaveTransactionService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationService,
+  ) {}
 
   findAll(employeeId?: string) {
     return this.prisma.leaveTransaction.findMany({
@@ -215,6 +219,17 @@ export class LeaveTransactionService {
     }
     const type = amount > 0 ? 'Acquisition' : 'Consumption';
     const result = await this.adjustBalance(employeeId, leaveTypeId, Math.abs(amount), type, actorId, undefined, this.prisma);
+
+    const leaveType = await this.prisma.leaveType.findUnique({ where: { Id: leaveTypeId }, select: { Name: true } });
+    const verb = amount > 0 ? 'crédité de' : 'débité de';
+    await this.notifications.create({
+      employeeId,
+      type: 'system',
+      title: 'Solde de congé ajusté',
+      message: `Votre solde de ${leaveType?.Name ?? 'congé'} a été ${verb} ${Math.abs(amount)} jour(s) par le service RH${reason ? ` (${reason})` : ''}.`,
+      href: '/employee/absences',
+    });
+
     return { balances: await this.getBalances(employeeId), wasClamped: result.wasClamped, newBalance: result.newBalance };
   }
 }

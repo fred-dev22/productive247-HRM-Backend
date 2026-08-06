@@ -2,6 +2,8 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
+import { renderEmailHtml } from '../mail/email-templates';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
@@ -13,6 +15,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly mail: MailService,
   ) {}
 
   async login(dto: LoginDto) {
@@ -73,6 +76,21 @@ export class AuthService {
     await this.prisma.user.update({
       where: { Id: userId },
       data: { PasswordHash, MustChangePassword: false },
+    });
+
+    await this.mail.send({
+      to: user.Email,
+      subject: 'Votre mot de passe a été modifié',
+      html: renderEmailHtml({
+        accent: 'info',
+        chipLabel: 'Mot de passe modifié',
+        title: 'Mot de passe modifié',
+        bodyLines: [
+          `Bonjour,`,
+          `Le mot de passe de votre compte (${user.Username}) vient d'être modifié.`,
+          `Si vous n'êtes pas à l'origine de ce changement, contactez immédiatement le service RH.`,
+        ],
+      }),
     });
 
     // Le token deja en circulation porte l'ancien mustChangePassword=true —
