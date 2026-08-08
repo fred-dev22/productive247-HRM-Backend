@@ -371,7 +371,10 @@ export class LeaveRequestService {
   }
 
   private async findOneRaw(id: string) {
-    const leaveRequest = await this.prisma.leaveRequest.findUnique({ where: { Id: id } });
+    // include leaveType : sans ça toContext() (emails/notifications) ne
+    // peut jamais afficher le type de congé, il retombe systematiquement
+    // sur le fallback '—'.
+    const leaveRequest = await this.prisma.leaveRequest.findUnique({ where: { Id: id }, include: { leaveType: true } });
     if (!leaveRequest) {
       throw new NotFoundException(`Demande de congé ${id} introuvable`);
     }
