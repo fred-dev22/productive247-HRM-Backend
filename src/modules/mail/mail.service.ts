@@ -33,7 +33,7 @@ export class MailService {
       body,
     });
     if (!res.ok) {
-      throw new Error(`Graph token request failed: ${res.status} ${await res.text()}`);
+      throw new Error(`Échec de la demande de jeton Graph : ${res.status} ${await res.text()}`);
     }
     const data = (await res.json()) as GraphTokenResponse;
     // Marge de 60s avant l'expiration reelle pour eviter d'utiliser un jeton

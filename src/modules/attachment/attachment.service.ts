@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SharePointService } from './sharepoint.service';
 import type { AttachmentEntityType } from './dto/upload-attachment.dto';
@@ -16,7 +16,15 @@ export class AttachmentService {
     file: Express.Multer.File,
     uploadedBy: string,
   ) {
-    const { url, size } = await this.sharePoint.uploadFile(file.originalname, file.buffer, file.mimetype);
+    let uploaded: { url: string; size: number };
+    try {
+      uploaded = await this.sharePoint.uploadFile(file.originalname, file.buffer, file.mimetype);
+    } catch {
+      // sharepoint.service.ts leve une Error brute (souvent en anglais, ex.
+      // panne/mauvaise config Graph) — jamais affichee telle quelle.
+      throw new InternalServerErrorException('Le téléversement du fichier a échoué, veuillez réessayer');
+    }
+    const { url, size } = uploaded;
     return this.prisma.attachment.create({
       data: {
         EntityType: entityType,

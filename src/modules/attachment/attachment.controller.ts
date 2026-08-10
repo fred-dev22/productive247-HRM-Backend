@@ -26,7 +26,7 @@ export class AttachmentController {
   @Get()
   findByEntity(@Query('entityType') entityType: AttachmentEntityType, @Query('entityId') entityId: string) {
     if (!ATTACHMENT_ENTITY_TYPES.includes(entityType)) {
-      throw new BadRequestException('entityType invalide');
+      throw new BadRequestException("Le type d'entité indiqué est invalide");
     }
     return this.service.findByEntity(entityType, entityId);
   }

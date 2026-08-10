@@ -1,4 +1,4 @@
-import { ArgumentsHost, BadRequestException, Catch, ConflictException } from '@nestjs/common';
+import { ArgumentsHost, BadRequestException, Catch, ConflictException, InternalServerErrorException } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
 import { Prisma } from '../../../prisma/generated/client';
 import { Request } from 'express';
@@ -178,6 +178,13 @@ export class PrismaExceptionFilter extends BaseExceptionFilter {
       return;
     }
 
-    super.catch(exception, host);
+    // Code Prisma non mappe explicitement (P2025 "enregistrement introuvable"
+    // apres suppression concurrente, etc.) — sans ce filet, Nest traite
+    // l'exception comme non geree et renvoie son "Internal server error" par
+    // defaut (anglais).
+    super.catch(
+      new InternalServerErrorException('Une erreur inattendue est survenue. Veuillez réessayer ou contacter le support.'),
+      host,
+    );
   }
 }
