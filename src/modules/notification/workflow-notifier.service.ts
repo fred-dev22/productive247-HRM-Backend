@@ -128,40 +128,72 @@ export class WorkflowNotifierService {
     }
   }
 
-  // Nouvelle demande soumise (ou premier niveau apres retour) : seul le
-  // validateur du niveau courant est notifie (in-app uniquement, pas
-  // d'email — trop frequent pour justifier une alerte hors-ligne).
-  async notifySubmitted(ctx: WorkflowContext, approverId: string) {
+  // Boutons "validation par email" (clic direct depuis la boite mail, sans
+  // connexion) — chacun pointe vers la page publique du frontend avec
+  // l'action pre-selectionnee (?action=...), authentifiee par le jeton
+  // lui-meme (voir ApprovalDecision.Token / PublicApprovalModule /
+  // PublicApprovalView.vue). Le lien reste un GET sans effet de bord ; seul
+  // le clic de confirmation du manager sur la page declenche l'action.
+  private approvalActionButtons(token: string): { label: string; href: string; color: 'primary' | 'danger' | 'warning' }[] {
+    const base = `${frontendOrigin()}/approval/${token}`;
+    return [
+      { label: 'Approuver', href: `${base}?action=Approved`, color: 'primary' },
+      { label: 'Retourner pour correction', href: `${base}?action=Returned`, color: 'warning' },
+      { label: 'Refuser', href: `${base}?action=Rejected`, color: 'danger' },
+    ];
+  }
+
+  // Nouvelle demande soumise (ou premier niveau apres retour) : le
+  // validateur du niveau courant est notifie in-app ET par email — sans
+  // email, un manager qui ne garde pas l'app ouverte ne sait jamais qu'une
+  // demande l'attend (bug remonte en revue du 08/08). `token` vient de la
+  // ApprovalDecision fraichement creee, il alimente le lien de validation
+  // par email.
+  async notifySubmitted(ctx: WorkflowContext, approverId: string, token: string) {
     this.broadcastChanged(ctx.kind);
     const [beneficiary, approver] = await Promise.all([
       this.resolvePerson(ctx.beneficiaryId),
       this.resolvePerson(approverId),
     ]);
-    await this.notifyPeople([approver], {
-      type: ctx.kind,
-      title: 'Nouvelle demande à valider',
-      message: `${beneficiary.name} — ${ctx.summary} en attente de votre validation`,
-      href: hrefToValidate(ctx),
-    });
+    const title = 'Nouvelle demande à valider';
+    const message = `${beneficiary.name} — ${ctx.summary} en attente de votre validation`;
+    await Promise.all([
+      this.notifyPeople([approver], { type: ctx.kind, title, message, href: hrefToValidate(ctx) }),
+      this.mail.send({
+        to: approver.email,
+        subject: title,
+        html: renderEmailHtml({
+          accent: 'primary', chipLabel: 'À valider', title, bodyLines: [message], details: ctx.details,
+          actionButtons: this.approvalActionButtons(token),
+        }),
+      }),
+    ]);
   }
 
-  // Passage au niveau de validation suivant : le nouveau validateur (in-app,
-  // meme message que notifySubmitted) + le beneficiaire/createur, informes
-  // que leur demande avance (in-app uniquement, pas encore une decision
-  // finale).
-  async notifyProgressed(ctx: WorkflowContext, nextApproverId: string) {
+  // Passage au niveau de validation suivant : le nouveau validateur (in-app
+  // + email, meme raisonnement que notifySubmitted) + le beneficiaire/
+  // createur, informes que leur demande avance (in-app uniquement, pas
+  // encore une decision finale).
+  async notifyProgressed(ctx: WorkflowContext, nextApproverId: string, token: string) {
     this.broadcastChanged(ctx.kind);
     const [beneficiary, creator, nextApprover] = await Promise.all([
       this.resolvePerson(ctx.beneficiaryId),
       this.resolvePerson(ctx.creatorId),
       this.resolvePerson(nextApproverId),
     ]);
-    await this.notifyPeople([nextApprover], {
-      type: ctx.kind,
-      title: 'Nouvelle demande à valider',
-      message: `${beneficiary.name} — ${ctx.summary} en attente de votre validation`,
-      href: hrefToValidate(ctx),
-    });
+    const title = 'Nouvelle demande à valider';
+    const message = `${beneficiary.name} — ${ctx.summary} en attente de votre validation`;
+    await Promise.all([
+      this.notifyPeople([nextApprover], { type: ctx.kind, title, message, href: hrefToValidate(ctx) }),
+      this.mail.send({
+        to: nextApprover.email,
+        subject: title,
+        html: renderEmailHtml({
+          accent: 'primary', chipLabel: 'À valider', title, bodyLines: [message], details: ctx.details,
+          actionButtons: this.approvalActionButtons(token),
+        }),
+      }),
+    ]);
     await this.notifyPeople([beneficiary, creator], {
       type: ctx.kind,
       title: 'Demande en cours de traitement',

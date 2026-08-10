@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
 import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
+import { generateApprovalToken } from '../../common/approval-token';
 import { CreateExpenseReportDto } from './dto/create-expense-report.dto';
 import { UpdateExpenseReportDto } from './dto/update-expense-report.dto';
 import { DecideExpenseReportDto } from './dto/decide-expense-report.dto';
@@ -361,6 +362,7 @@ export class ExpenseReportService {
     }
 
     const { member: firstStep, approverId } = applicable;
+    const token = generateApprovalToken();
     const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.expenseReport.update({
         where: { Id: id },
@@ -384,11 +386,12 @@ export class ExpenseReportService {
           StepOrder: firstStep.StepOrder,
           Decision: 'Pending',
           CreatedBy: requesterEmployeeId,
+          Token: token,
         },
       });
       return updated;
     });
-    await this.notifier.notifySubmitted(this.toContext(existing), approverId);
+    await this.notifier.notifySubmitted(this.toContext(existing), approverId, token);
     return updated;
   }
 
@@ -433,6 +436,7 @@ export class ExpenseReportService {
       .filter((m) => m.StepOrder > (existing.CurrentApprovalStep as number))
       .sort((a, b) => a.StepOrder - b.StepOrder);
     const applicable = await this.findApplicableStep(remainingMembers, existing.EmployeeId);
+    const nextToken = applicable ? generateApprovalToken() : null;
 
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.approvalDecision.update({
@@ -461,6 +465,7 @@ export class ExpenseReportService {
             StepOrder: nextStep.StepOrder,
             Decision: 'Pending',
             CreatedBy: approverEmployeeId,
+            Token: nextToken,
           },
         });
         return { updated, nextApproverId: approverId as string | null };
@@ -471,7 +476,7 @@ export class ExpenseReportService {
     });
 
     if (result.nextApproverId) {
-      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId);
+      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId, nextToken as string);
     } else {
       await this.notifier.notifyApproved(this.toContext(existing), { autoApproved: false });
     }

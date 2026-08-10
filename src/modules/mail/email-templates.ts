@@ -39,6 +39,12 @@ export interface EmailDetailRow {
   value: string;
 }
 
+export interface EmailActionButton {
+  label: string;
+  href: string;
+  color?: 'primary' | 'danger' | 'warning';
+}
+
 export interface EmailOptions {
   accent?: EmailAccent;
   chipLabel?: string;
@@ -49,6 +55,14 @@ export interface EmailOptions {
   details?: EmailDetailRow[];
   ctaLabel?: string;
   ctaHref?: string;
+  // Rangee de boutons colores empiles (ex: Approuver/Retourner/Refuser) — a
+  // la place du CTA unique. Chaque bouton pointe directement vers la page
+  // publique de validation, action pre-selectionnee via ?action=... (voir
+  // PublicApprovalView.vue) : le lien reste un GET sans effet de bord (une
+  // page qui affiche juste la confirmation prete), seul le clic du manager
+  // sur cette page declenche reellement l'action — protege des scanners de
+  // securite qui pre-visitent automatiquement les liens des emails recus.
+  actionButtons?: EmailActionButton[];
 }
 
 function escapeAttr(value: string): string {
@@ -84,6 +98,32 @@ function ctaBlockHtml(ctaLabel?: string, ctaHref?: string): string {
         </td>
       </tr>
     </table>`;
+}
+
+// Boutons empiles (une <tr> par bouton, pas de disposition cote-a-cote) —
+// plus fiable qu'un alignement horizontal sur Outlook desktop, qui ignore
+// souvent inline-block/white-space dans les tables imbriquees.
+function actionButtonsHtml(buttons?: EmailActionButton[]): string {
+  if (!buttons || buttons.length === 0) return '';
+  const bgFor = (color?: EmailActionButton['color']) =>
+    color === 'danger' ? COLORS.danger : color === 'warning' ? COLORS.warning : COLORS.primary;
+  const rows = buttons
+    .map(
+      (b) => `
+        <tr>
+          <td style="padding:0 0 8px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+              <tr>
+                <td style="background:${bgFor(b.color)};border-radius:6px;text-align:center;">
+                  <a href="${escapeAttr(b.href)}" style="display:block;padding:10px 20px;color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;">${b.label}</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>`,
+    )
+    .join('');
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 8px;">${rows}</table>`;
 }
 
 // Gabarit HTML partage par tous les emails de l'app — en-tete vert Galana
@@ -128,6 +168,7 @@ export function renderEmailHtml(opts: EmailOptions): string {
                 ${paragraphs}
                 ${detailsBlockHtml(opts.details)}
                 ${ctaBlockHtml(opts.ctaLabel, opts.ctaHref)}
+                ${actionButtonsHtml(opts.actionButtons)}
               </td>
             </tr>
             <tr>

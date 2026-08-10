@@ -9,6 +9,7 @@ import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
 import { LeaveTransactionService } from '../leave-transaction/leave-transaction.service';
 import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
 import { formatDateFr } from '../mail/email-templates';
+import { generateApprovalToken } from '../../common/approval-token';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { UpdateLeaveRequestDto } from './dto/update-leave-request.dto';
 import { DecideLeaveRequestDto } from './dto/decide-leave-request.dto';
@@ -616,6 +617,7 @@ export class LeaveRequestService {
     }
 
     const { member: firstStep, approverId } = applicable;
+    const token = generateApprovalToken();
     const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.leaveRequest.update({
         where: { Id: leaveRequest.Id },
@@ -638,11 +640,12 @@ export class LeaveRequestService {
           StepOrder: firstStep.StepOrder,
           Decision: 'Pending',
           CreatedBy: requesterEmployeeId,
+          Token: token,
         },
       });
       return updated;
     });
-    await this.notifier.notifySubmitted(this.toContext(leaveRequest), approverId);
+    await this.notifier.notifySubmitted(this.toContext(leaveRequest), approverId, token);
     return updated;
   }
 
@@ -690,6 +693,7 @@ export class LeaveRequestService {
       .filter((m) => m.StepOrder > (existing.CurrentApprovalStep as number))
       .sort((a, b) => a.StepOrder - b.StepOrder);
     const applicable = await this.findApplicableStep(remainingMembers, existing.EmployeeId);
+    const nextToken = applicable ? generateApprovalToken() : null;
 
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.approvalDecision.update({
@@ -718,6 +722,7 @@ export class LeaveRequestService {
             StepOrder: nextStep.StepOrder,
             Decision: 'Pending',
             CreatedBy: approverEmployeeId,
+            Token: nextToken,
           },
         });
         return { updated, nextApproverId: approverId as string | null };
@@ -741,7 +746,7 @@ export class LeaveRequestService {
     });
 
     if (result.nextApproverId) {
-      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId);
+      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId, nextToken as string);
     } else {
       await this.notifier.notifyApproved(this.toContext(existing), { autoApproved: false });
     }

@@ -474,6 +474,16 @@ model ApprovalDecision {
   Decision              String    @db.NVarChar(20)
   Comment               String?   @db.NVarChar(500)
   DecidedAt             DateTime? @db.DateTime2
+  // Jeton public pour la validation par email (clique-pour-approuver sans
+  // connexion) — genere a la creation de la decision, verifie cote
+  // PublicApprovalService (findFirst, pas findUnique : pas de contrainte
+  // @unique ici — sous SQL Server, un UNIQUE constraint interdit plusieurs
+  // NULL sur la meme colonne, ce que toutes les decisions pre-existantes a
+  // cette fonctionnalite auraient viole ; 192 bits d'alea rendent une
+  // collision reelle negligeable, l'index suffit pour la performance du
+  // lookup). Invalide de facto des que Decision != Pending (voir la
+  // verification "Decision: Pending" dans le lookup par token).
+  Token                 String?   @db.NVarChar(64)
 
   CreatedBy String   @db.UniqueIdentifier
   CreatedAt DateTime @default(now()) @db.DateTime2
@@ -486,6 +496,7 @@ model ApprovalDecision {
   @@index([EntityType, EntityId])
   @@index([ApprovalPoolMemberId])
   @@index([ValidatedByEmployeeId])
+  @@index([Token])
 }
 
 // =========================================================================

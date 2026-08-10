@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
 import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
 import { formatDateFr } from '../mail/email-templates';
+import { generateApprovalToken } from '../../common/approval-token';
 import { CreateMissionOrderDto } from './dto/create-mission-order.dto';
 import { UpdateMissionOrderDto } from './dto/update-mission-order.dto';
 import { DecideMissionOrderDto } from './dto/decide-mission-order.dto';
@@ -450,6 +451,7 @@ export class MissionOrderService {
     }
 
     const { member: firstStep, approverId } = applicable;
+    const token = generateApprovalToken();
     const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.missionOrder.update({
         where: { Id: id },
@@ -472,11 +474,12 @@ export class MissionOrderService {
           StepOrder: firstStep.StepOrder,
           Decision: 'Pending',
           CreatedBy: requesterEmployeeId,
+          Token: token,
         },
       });
       return updated;
     });
-    await this.notifier.notifySubmitted(this.toContext(existing), approverId);
+    await this.notifier.notifySubmitted(this.toContext(existing), approverId, token);
     return updated;
   }
 
@@ -521,6 +524,7 @@ export class MissionOrderService {
       .filter((m) => m.StepOrder > (existing.CurrentApprovalStep as number))
       .sort((a, b) => a.StepOrder - b.StepOrder);
     const applicable = await this.findApplicableStep(remainingMembers, existing.EmployeeId);
+    const nextToken = applicable ? generateApprovalToken() : null;
 
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.approvalDecision.update({
@@ -549,6 +553,7 @@ export class MissionOrderService {
             StepOrder: nextStep.StepOrder,
             Decision: 'Pending',
             CreatedBy: approverEmployeeId,
+            Token: nextToken,
           },
         });
         return { updated, nextApproverId: approverId as string | null };
@@ -559,7 +564,7 @@ export class MissionOrderService {
     });
 
     if (result.nextApproverId) {
-      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId);
+      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId, nextToken as string);
     } else {
       await this.notifier.notifyApproved(this.toContext(existing), { autoApproved: false });
     }
