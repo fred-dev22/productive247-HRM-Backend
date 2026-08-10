@@ -250,6 +250,24 @@ export class WorkflowNotifierService {
     ]);
   }
 
+  // Regularisation d'une absence maladie enregistree directement (workflow
+  // WorkflowType=Medical, voir registerMedicalLeave) — le passage en
+  // Regularized cloture le dossier, ni email ni notification n'etaient
+  // envoyes jusqu'ici (Lot H #9), contrairement aux autres etats terminaux.
+  async notifyRegularized(ctx: WorkflowContext) {
+    this.broadcastChanged(ctx.kind);
+    const [beneficiary, creator] = await Promise.all([
+      this.resolvePerson(ctx.beneficiaryId),
+      this.resolvePerson(ctx.creatorId),
+    ]);
+    const title = 'Absence régularisée';
+    const message = `${KIND_LABEL[ctx.kind]} (${ctx.summary}) a été régularisée.`;
+    await Promise.all([
+      this.notifyPeople([beneficiary, creator], { type: ctx.kind, title, message, href: hrefMine(ctx) }),
+      this.emailPeople([beneficiary, creator], { subject: title, message, accent: 'primary', chipLabel: 'Régularisée', ctx }),
+    ]);
+  }
+
   // Annulation : notifiee uniquement si quelqu'un d'autre que le beneficiaire
   // lui-meme a annule (typiquement un admin sur la demande d'un tiers) — un
   // auto-cancel n'a pas besoin de notifier son propre auteur.

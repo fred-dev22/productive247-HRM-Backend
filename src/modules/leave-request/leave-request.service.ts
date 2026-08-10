@@ -248,7 +248,16 @@ export class LeaveRequestService {
     return undefined;
   }
 
-  private async assertNoOverlap(employeeId: string, startDate: Date, endDate: Date, excludeId?: string) {
+  // errorMessage personnalise le message selon le sujet controle (beneficiaire
+  // vs interimaire, voir appels dans submit()) — la requete/logique reste
+  // identique dans les deux cas, seul le libelle change.
+  private async assertNoOverlap(
+    employeeId: string,
+    startDate: Date,
+    endDate: Date,
+    excludeId?: string,
+    errorMessage?: (referenceCode: string) => string,
+  ) {
     const overlapping = await this.prisma.leaveRequest.findFirst({
       where: {
         EmployeeId: employeeId,
@@ -260,7 +269,9 @@ export class LeaveRequestService {
     });
     if (overlapping) {
       throw new BadRequestException(
-        `Cette période chevauche une demande existante (${overlapping.ReferenceCode})`,
+        errorMessage
+          ? errorMessage(overlapping.ReferenceCode)
+          : `Cette période chevauche une demande existante (${overlapping.ReferenceCode})`,
       );
     }
   }
@@ -511,6 +522,15 @@ export class LeaveRequestService {
     const leaveType = await this.prisma.leaveType.findUniqueOrThrow({ where: { Id: existing.LeaveTypeId } });
 
     await this.assertNoOverlap(existing.EmployeeId, existing.StartDate, existing.EndDate, existing.Id);
+
+    // L'interimaire designe doit etre lui-meme disponible sur la periode —
+    // sinon il ne peut pas reellement assurer le remplacement (Lot H #7).
+    if (existing.InterimEmployeeId) {
+      await this.assertNoOverlap(
+        existing.InterimEmployeeId, existing.StartDate, existing.EndDate, undefined,
+        (code) => `L'intérimaire désigné est lui-même absent sur cette période (${code}) — choisissez quelqu'un d'autre ou ajustez les dates`,
+      );
+    }
 
     if (leaveType.WorkflowType === 'Medical') {
       return this.registerMedicalLeave(existing, leaveType, requesterEmployeeId);
@@ -869,10 +889,12 @@ export class LeaveRequestService {
     if (existing.Status !== 'Done') {
       throw new BadRequestException('Seule une demande effectuée peut être régularisée');
     }
-    return this.prisma.leaveRequest.update({
+    const updated = await this.prisma.leaveRequest.update({
       where: { Id: id },
       data: { Status: 'Regularized', ModifiedBy: requesterEmployeeId, ModifiedAt: new Date() },
       include: LEAVE_REQUEST_INCLUDE,
     });
+    await this.notifier.notifyRegularized(this.toContext(existing));
+    return updated;
   }
 }
