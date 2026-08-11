@@ -206,8 +206,16 @@ export class ExpenseReportService {
   // (reservee aux brouillons). Ici, n'importe quelle note (quel que soit son
   // statut) peut etre cachee de tout l'app (IsDeleted=true) sans toucher a
   // l'historique — reversible uniquement en base par un dev.
+  // Une note approuvee (ou remboursee) ne doit plus jamais pouvoir
+  // disparaitre — meme raisonnement que LeaveRequestService.softDelete
+  // (Lot I) : c'est la trace qui justifie le remboursement.
+  private static readonly APPROVED_LINEAGE = ['Approved', 'Reimbursed'];
+
   async softDelete(id: string, deletedBy: string) {
-    await this.findOneRaw(id);
+    const existing = await this.findOneRaw(id);
+    if (ExpenseReportService.APPROVED_LINEAGE.includes(existing.Status)) {
+      throw new BadRequestException('Une note de frais approuvée ne peut plus être supprimée.');
+    }
     const report = await this.prisma.expenseReport.update({
       where: { Id: id },
       data: { IsDeleted: true, DeletedBy: deletedBy, DeletedAt: new Date() },

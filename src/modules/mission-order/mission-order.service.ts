@@ -297,8 +297,14 @@ export class MissionOrderService {
   // (reservee aux brouillons). Ici, n'importe quel ordre (quel que soit son
   // statut) peut etre cache de tout l'app (IsDeleted=true) sans toucher a
   // l'historique — reversible uniquement en base par un dev.
+  // Un ordre de mission approuve ne doit plus jamais pouvoir disparaitre —
+  // meme raisonnement que LeaveRequestService.softDelete (Lot I) : c'est la
+  // trace qui justifie les indemnites versees.
   async softDelete(id: string, deletedBy: string) {
-    await this.findOneRaw(id);
+    const existing = await this.findOneRaw(id);
+    if (existing.Status === 'Approved') {
+      throw new BadRequestException('Un ordre de mission approuvé ne peut plus être supprimé.');
+    }
     const missionOrder = await this.prisma.missionOrder.update({
       where: { Id: id },
       data: { IsDeleted: true, DeletedBy: deletedBy, DeletedAt: new Date() },
