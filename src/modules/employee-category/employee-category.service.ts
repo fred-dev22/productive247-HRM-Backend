@@ -11,7 +11,13 @@ export class EmployeeCategoryService {
   constructor(private readonly prisma: PrismaService) {}
 
   private include() {
-    return { categoryPermissions: { include: { permission: true } } };
+    return {
+      categoryPermissions: { include: { permission: true } },
+      // Plan de tests #15 : permettre de voir avant coup combien d'employés
+      // sont rattachés à une catégorie (la suppression est déjà bloquée avec
+      // un message clair si ce nombre est > 0, voir remove() ci-dessous).
+      _count: { select: { employees: { where: { IsDeleted: false, IsSystem: false } } } },
+    };
   }
 
   create(dto: CreateEmployeeCategoryDto, createdBy: string) {

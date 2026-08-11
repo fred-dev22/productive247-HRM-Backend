@@ -64,9 +64,23 @@ export class OrganizationUnitService {
     if (dto.Status === 'Inactive' && unit.ParentId === null) {
       throw new BadRequestException("L'entité racine de l'organigramme ne peut pas être désactivée");
     }
+    const data: UpdateOrganizationUnitDto & { ModifiedBy: string; ModifiedAt: Date; Status?: string } = {
+      ...dto,
+      ModifiedBy: modifiedBy,
+      ModifiedAt: new Date(),
+    };
+    // Plan de tests #23 : une entite deja approuvee (Active) restait
+    // modifiable sans repasser par la validation. Un edit de contenu (aucun
+    // Status explicite dans le payload — distinct de Desactiver/Reactiver,
+    // qui envoient toujours Status) sur une entite Active la repasse en
+    // attente d'approbation. L'entite racine y echappe, meme exception que
+    // pour la desactivation ci-dessus : elle reste toujours active.
+    if (dto.Status === undefined && unit.Status === 'Active' && unit.ParentId !== null) {
+      data.Status = 'PendingApproval';
+    }
     return this.prisma.organizationUnit.update({
       where: { Id: id },
-      data: { ...dto, ModifiedBy: modifiedBy, ModifiedAt: new Date() },
+      data,
     });
   }
 

@@ -50,7 +50,16 @@ export class EmployeeService {
     }
   }
 
+  // Plan de tests #35 : une date d'embauche antérieure à la date de
+  // naissance était acceptée sans contrôle.
+  private assertHireDateAfterBirthDate(birthDate: Date, hireDate: Date) {
+    if (hireDate <= birthDate) {
+      throw new BadRequestException("La date d'embauche doit être postérieure à la date de naissance.");
+    }
+  }
+
   async create(dto: CreateEmployeeDto, createdBy: string) {
+    this.assertHireDateAfterBirthDate(dto.BirthDate, dto.HireDate);
     const employeeNumber = dto.EmployeeNumber?.trim() || (await this.generateEmployeeNumber());
     const employee = await this.prisma.$transaction(async (tx) => {
       if (dto.PositionId) {
@@ -192,6 +201,7 @@ export class EmployeeService {
     const existing = await this.findOne(id);
     const FirstName = dto.FirstName ?? existing.FirstName;
     const LastName = dto.LastName ?? existing.LastName;
+    this.assertHireDateAfterBirthDate(dto.BirthDate ?? existing.BirthDate, dto.HireDate ?? existing.HireDate);
 
     // 'PositionId' in dto distinguishes "field omitted from the PATCH body"
     // (no change intended) from "field explicitly sent" (including null,
