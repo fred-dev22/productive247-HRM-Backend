@@ -58,9 +58,9 @@ model OrganizationUnit {
   // toute l'UI ; seul un dev peut la repasser a false directement en base.
   // Pas de relation Prisma vers Employee pour DeletedBy (juste l'Id brut) :
   // ce champ n'est jamais affiche dans l'app, seulement consulte par un dev.
-  IsDeleted Boolean   @default(false)
-  DeletedBy String?   @db.UniqueIdentifier
-  DeletedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
 
   parent   OrganizationUnit?  @relation("OrganizationUnitHierarchy", fields: [ParentId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   children OrganizationUnit[] @relation("OrganizationUnitHierarchy")
@@ -185,9 +185,9 @@ model Employee {
   // MySQL) — cassant des le 2e employe sans compte. seed.ts la remplace par
   // un index unique FILTRE (WHERE UserId IS NOT NULL) a chaque demarrage —
   // voir fixEmployeeUserIdUniqueIndex(), a rejouer apres tout `db push`.
-  UserId String? @unique @db.UniqueIdentifier
+  UserId       String? @unique @db.UniqueIdentifier
   // Status: Active | OnTrial | OnLeave | Inactive
-  Status String  @db.NVarChar(10)
+  Status       String  @db.NVarChar(10)
   // Regime de conges (reunion Dominique du 12/06) : un employe "local" qui
   // est absent tout le vendredi precedant un week-end voit ce week-end aussi
   // decompte de son solde (ex: conge pris vendredi->lundi = 3 jours), pas un
@@ -199,16 +199,16 @@ model Employee {
   // selecteur (beneficiaire, interimaire, validateur, responsable...), voir
   // employee.service.ts findAll/findTeam/findDirectory. Reste visible et
   // gerable normalement partout ou l'admin le cherche explicitement par nom.
-  IsSystem Boolean @default(false)
+  IsSystem     Boolean @default(false)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
   // Suppression (Lot I) — voir OrganizationUnit ci-dessus pour la justification.
-  IsDeleted Boolean   @default(false)
-  DeletedBy String?   @db.UniqueIdentifier
-  DeletedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
 
   position         Position?         @relation(fields: [PositionId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   organizationUnit OrganizationUnit  @relation("EmployeeOrganizationUnit", fields: [OrganizationUnitId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
@@ -283,6 +283,9 @@ model Employee {
 
   expenseConfigsCreated  ExpenseConfig[] @relation("ExpenseConfigCreatedBy")
   expenseConfigsModified ExpenseConfig[] @relation("ExpenseConfigModifiedBy")
+
+  expenseCeilingsCreated  ExpenseCeiling[] @relation("ExpenseCeilingCreatedBy")
+  expenseCeilingsModified ExpenseCeiling[] @relation("ExpenseCeilingModifiedBy")
 
   attachmentsCreated Attachment[] @relation("AttachmentCreatedBy")
 
@@ -542,8 +545,8 @@ model CompanySettings {
   // CalendarConfigCategoryId n'a de sens que si CalendarConfigScope =
   // 'Category' ; pas de FK, la valeur est juste ignoree cote frontend si la
   // categorie n'existe plus.
-  CalendarConfigScope       String?   @db.NVarChar(20)
-  CalendarConfigCategoryId  String?   @db.UniqueIdentifier
+  CalendarConfigScope      String? @db.NVarChar(20)
+  CalendarConfigCategoryId String? @db.UniqueIdentifier
 
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
@@ -570,8 +573,8 @@ model Calendar {
   ModifiedAt DateTime? @db.DateTime2
 
   employeeCategory   EmployeeCategory? @relation(fields: [EmployeeCategoryId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  createdByEmployee  Employee  @relation("CalendarCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  modifiedByEmployee Employee? @relation("CalendarModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdByEmployee  Employee          @relation("CalendarCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee?         @relation("CalendarModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   workDays CalendarWorkDay[]
 }
@@ -625,21 +628,25 @@ model Holiday {
 /// Types de conges configurables par l'admin RH. Chaque type a ses propres
 /// regles d'accumulation, de plafond et de validation.
 model LeaveType {
-  Id               String   @id @default(uuid()) @db.UniqueIdentifier
-  Code             String   @unique @db.NVarChar(20)
-  Name             String   @db.NVarChar(100)
+  Id                    String   @id @default(uuid()) @db.UniqueIdentifier
+  Code                  String   @unique @db.NVarChar(20)
+  Name                  String   @db.NVarChar(100)
   // WorkflowType: Standard | Medical
-  WorkflowType     String   @db.NVarChar(20)
-  MonthlyAccrual   Boolean  @default(false)
-  DaysPerYear      Decimal  @db.Decimal(5, 2)
-  DaysPerMonth     Decimal? @db.Decimal(5, 2)
-  DocumentRequired Boolean  @default(false)
-  CarryOverAllowed Boolean  @default(false)
-  CarryOverCap     Int      @default(0)
-  MinNoticeDays    Int      @default(0)
-  Color            String   @db.NVarChar(20)
-  IsActive         Boolean  @default(true)
-  IsSystem         Boolean  @default(false)
+  WorkflowType          String   @db.NVarChar(20)
+  MonthlyAccrual        Boolean  @default(false)
+  DaysPerYear           Decimal  @db.Decimal(5, 2)
+  DaysPerMonth          Decimal? @db.Decimal(5, 2)
+  DocumentRequired      Boolean  @default(false)
+  // Delai (en heures, a partir du debut de l'absence) pour fournir le
+  // justificatif quand DocumentRequired est actif — plan de tests #40
+  // (volet parametrage du workflow Medical, mais applicable a tout type).
+  DocumentDeadlineHours Int?
+  CarryOverAllowed      Boolean  @default(false)
+  CarryOverCap          Int      @default(0)
+  MinNoticeDays         Int      @default(0)
+  Color                 String   @db.NVarChar(20)
+  IsActive              Boolean  @default(true)
+  IsSystem              Boolean  @default(false)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -769,9 +776,9 @@ model LeaveRequest {
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
   // Suppression (Lot I) — voir OrganizationUnit pour la justification.
-  IsDeleted Boolean   @default(false)
-  DeletedBy String?   @db.UniqueIdentifier
-  DeletedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
 
   employee        Employee      @relation("LeaveRequestEmployee", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   leaveType       LeaveType     @relation(fields: [LeaveTypeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
@@ -823,9 +830,9 @@ model MissionOrder {
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
   // Suppression (Lot I) — voir OrganizationUnit pour la justification.
-  IsDeleted Boolean   @default(false)
-  DeletedBy String?   @db.UniqueIdentifier
-  DeletedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
 
   employee     Employee      @relation("MissionOrderEmployee", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   approvalPool ApprovalPool? @relation(fields: [ApprovalPoolId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
@@ -862,9 +869,9 @@ model ExpenseReport {
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
   // Suppression (Lot I) — voir OrganizationUnit pour la justification.
-  IsDeleted Boolean   @default(false)
-  DeletedBy String?   @db.UniqueIdentifier
-  DeletedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
 
   missionOrder MissionOrder? @relation(fields: [MissionOrderId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   employee     Employee      @relation("ExpenseReportEmployee", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
@@ -930,6 +937,7 @@ model EmployeeCategory {
   modifiedByEmployee Employee? @relation("EmployeeCategoryModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   expenseConfigs      ExpenseConfig[]
+  expenseCeilings     ExpenseCeiling[]
   employees           Employee[]
   users               User[]
   categoryPermissions CategoryPermission[]
@@ -954,8 +962,9 @@ model ExpenseType {
   createdByEmployee  Employee  @relation("ExpenseTypeCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee? @relation("ExpenseTypeModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
-  expenseLines   ExpenseLine[]
-  expenseConfigs ExpenseConfig[]
+  expenseLines    ExpenseLine[]
+  expenseConfigs  ExpenseConfig[]
+  expenseCeilings ExpenseCeiling[]
 }
 
 /// Matrice de configuration des taux de frais : EmployeeCategory x
@@ -984,6 +993,30 @@ model ExpenseConfig {
   modifiedByEmployee Employee? @relation("ExpenseConfigModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([EmployeeCategoryId, ExpenseTypeId, MissionCategory])
+}
+
+/// Plafond de remboursement d'une note de frais (independant d'une mission)
+/// par categorie d'employe et type de depense — plan de tests #21 : le
+/// depassement doit bloquer la soumission de la note de frais.
+model ExpenseCeiling {
+  Id                 String  @id @default(uuid()) @db.UniqueIdentifier
+  EmployeeCategoryId String  @db.UniqueIdentifier
+  ExpenseTypeId      String  @db.UniqueIdentifier
+  MaxAmount          Decimal @db.Decimal(18, 2)
+  Currency           String  @db.NVarChar(3)
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+
+  employeeCategory EmployeeCategory @relation(fields: [EmployeeCategoryId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  expenseType      ExpenseType      @relation(fields: [ExpenseTypeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  createdByEmployee  Employee  @relation("ExpenseCeilingCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee? @relation("ExpenseCeilingModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([EmployeeCategoryId, ExpenseTypeId])
 }
 
 // =========================================================================

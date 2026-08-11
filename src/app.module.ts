@@ -18,6 +18,7 @@ import { CompanySettingsModule } from './modules/company-settings/company-settin
 import { EmployeeCategoryModule } from './modules/employee-category/employee-category.module';
 import { ExpenseTypeModule } from './modules/expense-type/expense-type.module';
 import { ExpenseConfigModule } from './modules/expense-config/expense-config.module';
+import { ExpenseCeilingModule } from './modules/expense-ceiling/expense-ceiling.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { LeaveRequestModule } from './modules/leave-request/leave-request.module';
 import { LeaveTransactionModule } from './modules/leave-transaction/leave-transaction.module';
@@ -47,6 +48,7 @@ import { PublicApprovalModule } from './modules/public-approval/public-approval.
     EmployeeCategoryModule,
     ExpenseTypeModule,
     ExpenseConfigModule,
+    ExpenseCeilingModule,
     RbacModule,
     LeaveRequestModule,
     LeaveTransactionModule,

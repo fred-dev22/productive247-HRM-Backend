@@ -12,6 +12,7 @@ import { CreateExpenseReportDto } from './dto/create-expense-report.dto';
 import { UpdateExpenseReportDto } from './dto/update-expense-report.dto';
 import { DecideExpenseReportDto } from './dto/decide-expense-report.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { ExpenseCeilingService } from '../expense-ceiling/expense-ceiling.service';
 
 const EDITABLE_STATUSES = ['Draft', 'Returned'];
 const CANCELLABLE_STATUSES = ['Draft', 'InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4', 'Approved'];
@@ -34,6 +35,7 @@ export class ExpenseReportService {
     private readonly approvalPoolService: ApprovalPoolService,
     private readonly notifier: WorkflowNotifierService,
     private readonly realtime: RealtimeGateway,
+    private readonly ceilingService: ExpenseCeilingService,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────
@@ -340,6 +342,26 @@ export class ExpenseReportService {
     return this.attachTotals(result);
   }
 
+  // Plan de tests #21 : le plafond configure par categorie d'employe et type
+  // de depense (ExpenseCeiling) doit bloquer la soumission si depasse. Sans
+  // categorie assignee a l'employe, aucun plafond ne peut se resoudre — la
+  // soumission n'est alors pas bloquee sur ce critere.
+  private async assertWithinCeilings(reportId: string, employeeCategoryId: string | null) {
+    if (!employeeCategoryId) return;
+    const lines = await this.prisma.expenseLine.findMany({
+      where: { ExpenseReportId: reportId },
+      include: { expenseType: true },
+    });
+    for (const line of lines) {
+      const ceiling = await this.ceilingService.findByCategoryAndType(employeeCategoryId, line.ExpenseTypeId);
+      if (ceiling && Number(line.Amount) > Number(ceiling.MaxAmount)) {
+        throw new BadRequestException(
+          `Le montant de la ligne « ${line.expenseType.Name} » (${Number(line.Amount).toLocaleString('fr-FR')} ${line.Currency}) dépasse le plafond autorisé pour votre catégorie (${Number(ceiling.MaxAmount).toLocaleString('fr-FR')} ${ceiling.Currency}).`,
+        );
+      }
+    }
+  }
+
   // ── Workflow ─────────────────────────────────────────────────────────
 
   async submit(id: string, requesterEmployeeId: string, canOverride: boolean) {
@@ -356,6 +378,7 @@ export class ExpenseReportService {
     }
 
     const employee = await this.prisma.employee.findUniqueOrThrow({ where: { Id: existing.EmployeeId } });
+    await this.assertWithinCeilings(id, employee.EmployeeCategoryId);
     const pool = await this.approvalPoolService.findApplicablePool(employee.OrganizationUnitId, 'ExpenseReport');
     if (!pool) {
       throw new NotFoundException(

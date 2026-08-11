@@ -29,15 +29,22 @@ export class CreateLeaveTypeDto {
   MonthlyAccrual?: boolean;
 
   @IsNumber()
+  @Min(0, { message: 'Le nombre de jours par an ne peut pas être négatif' })
   DaysPerYear: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0, { message: "L'accumulation mensuelle ne peut pas être négative" })
   DaysPerMonth?: number;
 
   @IsOptional()
   @IsBoolean()
   DocumentRequired?: boolean;
+
+  @IsOptional()
+  @IsInt({ message: 'Le délai de soumission doit être un nombre entier d\'heures' })
+  @Min(1, { message: 'Le délai de soumission doit être d\'au moins 1 heure' })
+  DocumentDeadlineHours?: number;
 
   @IsOptional()
   @IsBoolean()
