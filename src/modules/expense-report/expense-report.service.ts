@@ -11,6 +11,7 @@ import { generateApprovalToken } from '../../common/approval-token';
 import { CreateExpenseReportDto } from './dto/create-expense-report.dto';
 import { UpdateExpenseReportDto } from './dto/update-expense-report.dto';
 import { DecideExpenseReportDto } from './dto/decide-expense-report.dto';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 const EDITABLE_STATUSES = ['Draft', 'Returned'];
 const CANCELLABLE_STATUSES = ['Draft', 'InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4', 'Approved'];
@@ -32,6 +33,7 @@ export class ExpenseReportService {
     private readonly prisma: PrismaService,
     private readonly approvalPoolService: ApprovalPoolService,
     private readonly notifier: WorkflowNotifierService,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────
@@ -70,7 +72,7 @@ export class ExpenseReportService {
 
   private async findOneRaw(id: string) {
     const report = await this.prisma.expenseReport.findUnique({ where: { Id: id } });
-    if (!report) {
+    if (!report || report.IsDeleted) {
       throw new NotFoundException(`Note de frais ${id} introuvable`);
     }
     return report;
@@ -84,7 +86,13 @@ export class ExpenseReportService {
   ): Promise<string> {
     if (!member.InterimEmployeeId) return member.EmployeeId;
     const onApprovedLeave = await this.prisma.leaveRequest.findFirst({
-      where: { EmployeeId: member.EmployeeId, Status: 'Approved', StartDate: { lte: at }, EndDate: { gte: at } },
+      where: {
+        EmployeeId: member.EmployeeId,
+        Status: 'Approved',
+        StartDate: { lte: at },
+        EndDate: { gte: at },
+        IsDeleted: false,
+      },
     });
     return onApprovedLeave ? member.InterimEmployeeId : member.EmployeeId;
   }
@@ -194,6 +202,20 @@ export class ExpenseReportService {
     return this.prisma.expenseReport.delete({ where: { Id: id } });
   }
 
+  // Suppression definitive (Lot I) — distincte de remove() ci-dessus
+  // (reservee aux brouillons). Ici, n'importe quelle note (quel que soit son
+  // statut) peut etre cachee de tout l'app (IsDeleted=true) sans toucher a
+  // l'historique — reversible uniquement en base par un dev.
+  async softDelete(id: string, deletedBy: string) {
+    await this.findOneRaw(id);
+    const report = await this.prisma.expenseReport.update({
+      where: { Id: id },
+      data: { IsDeleted: true, DeletedBy: deletedBy, DeletedAt: new Date() },
+    });
+    this.realtime.broadcastCompany('data:changed', { domain: 'expense' });
+    return report;
+  }
+
   async findOne(id: string) {
     const report = await this.prisma.expenseReport.findUnique({
       where: { Id: id },
@@ -203,7 +225,7 @@ export class ExpenseReportService {
         lines: { include: { expenseType: true }, orderBy: { ExpenseDate: 'asc' } },
       },
     });
-    if (!report) {
+    if (!report || report.IsDeleted) {
       throw new NotFoundException(`Note de frais ${id} introuvable`);
     }
     const decisions = await this.prisma.approvalDecision.findMany({
@@ -222,7 +244,7 @@ export class ExpenseReportService {
   // (decision du 01/08) — le createur doit pouvoir suivre ce qu'il a soumis.
   async findMine(employeeId: string) {
     const reports = await this.prisma.expenseReport.findMany({
-      where: { OR: [{ EmployeeId: employeeId }, { CreatedBy: employeeId }] },
+      where: { OR: [{ EmployeeId: employeeId }, { CreatedBy: employeeId }], IsDeleted: false },
       include: {
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
         createdByEmployee: { select: { Id: true, FullName: true } },
@@ -237,7 +259,7 @@ export class ExpenseReportService {
     const unitIds = await this.collectManagedUnitIds(managerEmployeeId);
     if (unitIds.length === 0) return [];
     const reports = await this.prisma.expenseReport.findMany({
-      where: { employee: { OrganizationUnitId: { in: unitIds } } },
+      where: { employee: { OrganizationUnitId: { in: unitIds } }, IsDeleted: false },
       include: REPORT_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
@@ -280,6 +302,7 @@ export class ExpenseReportService {
 
   async findAll() {
     const reports = await this.prisma.expenseReport.findMany({
+      where: { IsDeleted: false },
       include: REPORT_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
@@ -288,7 +311,7 @@ export class ExpenseReportService {
 
   async findPendingForMe(employeeId: string) {
     const inApproval = await this.prisma.expenseReport.findMany({
-      where: { Status: { in: ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'] } },
+      where: { Status: { in: ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'] }, IsDeleted: false },
       include: {
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
         createdByEmployee: { select: { Id: true, FullName: true } },

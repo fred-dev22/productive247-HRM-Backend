@@ -85,9 +85,10 @@ export class OrganizationUnitController {
     return this.service.reject(id, employeeId);
   }
 
-  @Delete(':id')
-  @RequirePermission('ENTITE_DESACTIVER')
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  // Suppression definitive (Lot I) — voir doc de service.softDelete().
+  @Delete(':id/permanent')
+  @RequirePermission('ENTITE_SUPPRIMER')
+  softDelete(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
+    return this.service.softDelete(id, employeeId);
   }
 }

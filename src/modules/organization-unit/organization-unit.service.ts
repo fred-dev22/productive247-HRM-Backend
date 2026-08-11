@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrganizationUnitDto } from './dto/create-organization-unit.dto';
 import { UpdateOrganizationUnitDto } from './dto/update-organization-unit.dto';
@@ -21,11 +21,11 @@ export class OrganizationUnitService {
   }
 
   findAll() {
-    return this.prisma.organizationUnit.findMany();
+    return this.prisma.organizationUnit.findMany({ where: { IsDeleted: false } });
   }
 
   async findTree() {
-    const units = await this.prisma.organizationUnit.findMany();
+    const units = await this.prisma.organizationUnit.findMany({ where: { IsDeleted: false } });
     const byParent = new Map<string | null, typeof units>();
     for (const unit of units) {
       const key = unit.ParentId;
@@ -43,28 +43,63 @@ export class OrganizationUnitService {
   }
 
   findChildren(id: string) {
-    return this.prisma.organizationUnit.findMany({ where: { ParentId: id } });
+    return this.prisma.organizationUnit.findMany({ where: { ParentId: id, IsDeleted: false } });
   }
 
   async findOne(id: string) {
     const unit = await this.prisma.organizationUnit.findUnique({ where: { Id: id } });
-    if (!unit) {
+    if (!unit || unit.IsDeleted) {
       throw new NotFoundException(`Unité organisationnelle ${id} introuvable`);
     }
     return unit;
   }
 
   async update(id: string, dto: UpdateOrganizationUnitDto, modifiedBy: string) {
-    await this.findOne(id);
+    const unit = await this.findOne(id);
+    // L'entite racine (Direction Generale, creee au seed, sans parent) ne
+    // peut jamais etre desactivee — c'est la racine de tout l'organigramme,
+    // la desactiver casserait irremediablement la structure de l'entreprise.
+    // Le frontend deja masque le bouton, ceci est le filet de securite cote
+    // serveur si l'API est appelee directement.
+    if (dto.Status === 'Inactive' && unit.ParentId === null) {
+      throw new BadRequestException("L'entité racine de l'organigramme ne peut pas être désactivée");
+    }
     return this.prisma.organizationUnit.update({
       where: { Id: id },
       data: { ...dto, ModifiedBy: modifiedBy, ModifiedAt: new Date() },
     });
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
-    return this.prisma.organizationUnit.delete({ where: { Id: id } });
+  // Suppression definitive (Lot I) — cache l'entite de tout l'app
+  // (IsDeleted:false deja applique dans findAll/findTree/findChildren/
+  // findOne) sans casser les references historiques. Bloque si l'entite a
+  // encore des enfants ou des employes actifs, sans quoi ils pointeraient
+  // vers une entite devenue invisible partout. (Un ancien remove() faisait
+  // un hard delete via DELETE /:id sous ENTITE_DESACTIVER — supprime : mort
+  // cote frontend, qui ne PATCHe que Status pour desactiver/reactiver.)
+  async softDelete(id: string, deletedBy: string) {
+    const unit = await this.findOne(id);
+    if (unit.ParentId === null) {
+      throw new BadRequestException("L'entité racine de l'organigramme ne peut pas être supprimée");
+    }
+    const [childCount, employeeCount] = await Promise.all([
+      this.prisma.organizationUnit.count({ where: { ParentId: id, IsDeleted: false } }),
+      this.prisma.employee.count({ where: { OrganizationUnitId: id, IsDeleted: false } }),
+    ]);
+    if (childCount > 0) {
+      throw new BadRequestException(
+        `Cette entité a encore ${childCount} sous-entité(s) — déplacez-les ou supprimez-les d'abord`,
+      );
+    }
+    if (employeeCount > 0) {
+      throw new BadRequestException(
+        `Cette entité a encore ${employeeCount} employé(s) rattaché(s) — réaffectez-les d'abord`,
+      );
+    }
+    return this.prisma.organizationUnit.update({
+      where: { Id: id },
+      data: { IsDeleted: true, DeletedBy: deletedBy, DeletedAt: new Date() },
+    });
   }
 
   async submit(id: string, modifiedBy: string) {

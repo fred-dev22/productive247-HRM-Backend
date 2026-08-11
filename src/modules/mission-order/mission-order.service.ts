@@ -12,6 +12,7 @@ import { generateApprovalToken } from '../../common/approval-token';
 import { CreateMissionOrderDto } from './dto/create-mission-order.dto';
 import { UpdateMissionOrderDto } from './dto/update-mission-order.dto';
 import { DecideMissionOrderDto } from './dto/decide-mission-order.dto';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 const EDITABLE_STATUSES = ['Draft', 'Returned'];
 const CANCELLABLE_STATUSES = ['Draft', 'InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4', 'Approved'];
@@ -43,6 +44,7 @@ export class MissionOrderService {
     private readonly prisma: PrismaService,
     private readonly approvalPoolService: ApprovalPoolService,
     private readonly notifier: WorkflowNotifierService,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────
@@ -155,7 +157,7 @@ export class MissionOrderService {
 
   private async findOneRaw(id: string) {
     const missionOrder = await this.prisma.missionOrder.findUnique({ where: { Id: id } });
-    if (!missionOrder) {
+    if (!missionOrder || missionOrder.IsDeleted) {
       throw new NotFoundException(`Ordre de mission ${id} introuvable`);
     }
     return missionOrder;
@@ -169,7 +171,13 @@ export class MissionOrderService {
   ): Promise<string> {
     if (!member.InterimEmployeeId) return member.EmployeeId;
     const onApprovedLeave = await this.prisma.leaveRequest.findFirst({
-      where: { EmployeeId: member.EmployeeId, Status: 'Approved', StartDate: { lte: at }, EndDate: { gte: at } },
+      where: {
+        EmployeeId: member.EmployeeId,
+        Status: 'Approved',
+        StartDate: { lte: at },
+        EndDate: { gte: at },
+        IsDeleted: false,
+      },
     });
     return onApprovedLeave ? member.InterimEmployeeId : member.EmployeeId;
   }
@@ -285,6 +293,20 @@ export class MissionOrderService {
     return this.prisma.missionOrder.delete({ where: { Id: id } });
   }
 
+  // Suppression definitive (Lot I) — distincte de remove() ci-dessus
+  // (reservee aux brouillons). Ici, n'importe quel ordre (quel que soit son
+  // statut) peut etre cache de tout l'app (IsDeleted=true) sans toucher a
+  // l'historique — reversible uniquement en base par un dev.
+  async softDelete(id: string, deletedBy: string) {
+    await this.findOneRaw(id);
+    const missionOrder = await this.prisma.missionOrder.update({
+      where: { Id: id },
+      data: { IsDeleted: true, DeletedBy: deletedBy, DeletedAt: new Date() },
+    });
+    this.realtime.broadcastCompany('data:changed', { domain: 'mission' });
+    return missionOrder;
+  }
+
   async findOne(id: string) {
     const missionOrder = await this.prisma.missionOrder.findUnique({
       where: { Id: id },
@@ -293,7 +315,7 @@ export class MissionOrderService {
         createdByEmployee: { select: { Id: true, FullName: true } },
       },
     });
-    if (!missionOrder) {
+    if (!missionOrder || missionOrder.IsDeleted) {
       throw new NotFoundException(`Ordre de mission ${id} introuvable`);
     }
     const decisions = await this.prisma.approvalDecision.findMany({
@@ -317,7 +339,7 @@ export class MissionOrderService {
   async findMine(employeeId: string, forEmployeeId?: string) {
     const employeeIds = forEmployeeId && forEmployeeId !== employeeId ? [employeeId, forEmployeeId] : [employeeId];
     const missions = await this.prisma.missionOrder.findMany({
-      where: { OR: [{ EmployeeId: { in: employeeIds } }, { CreatedBy: employeeId }] },
+      where: { OR: [{ EmployeeId: { in: employeeIds } }, { CreatedBy: employeeId }], IsDeleted: false },
       include: {
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
         createdByEmployee: { select: { Id: true, FullName: true } },
@@ -331,7 +353,7 @@ export class MissionOrderService {
     const unitIds = await this.collectManagedUnitIds(managerEmployeeId);
     if (unitIds.length === 0) return [];
     const missions = await this.prisma.missionOrder.findMany({
-      where: { employee: { OrganizationUnitId: { in: unitIds } } },
+      where: { employee: { OrganizationUnitId: { in: unitIds } }, IsDeleted: false },
       include: MISSION_EMPLOYEE_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
@@ -374,6 +396,7 @@ export class MissionOrderService {
 
   async findAll() {
     const missions = await this.prisma.missionOrder.findMany({
+      where: { IsDeleted: false },
       include: MISSION_EMPLOYEE_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
@@ -382,7 +405,7 @@ export class MissionOrderService {
 
   async findPendingForMe(employeeId: string) {
     const inApproval = await this.prisma.missionOrder.findMany({
-      where: { Status: { in: ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'] } },
+      where: { Status: { in: ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'] }, IsDeleted: false },
       include: {
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
         createdByEmployee: { select: { Id: true, FullName: true } },

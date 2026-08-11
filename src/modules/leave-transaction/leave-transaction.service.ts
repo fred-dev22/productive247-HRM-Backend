@@ -48,7 +48,7 @@ export class LeaveTransactionService {
   async getAllBalances() {
     const [employees, balances, leaveTypes] = await Promise.all([
       this.prisma.employee.findMany({
-        where: { Status: { in: ['Active', 'OnTrial'] }, IsSystem: false },
+        where: { Status: { in: ['Active', 'OnTrial'] }, IsSystem: false, IsDeleted: false },
         select: { Id: true, FullName: true, organizationUnit: { select: { Name: true } } },
       }),
       this.prisma.employeeLeaveBalance.findMany(),
@@ -160,7 +160,7 @@ export class LeaveTransactionService {
 
     const [employees, leaveTypes] = await Promise.all([
       this.prisma.employee.findMany({
-        where: { Status: { in: ['Active', 'OnTrial'] }, IsSystem: false, ...(opts?.employeeId ? { Id: opts.employeeId } : {}) },
+        where: { Status: { in: ['Active', 'OnTrial'] }, IsSystem: false, IsDeleted: false, ...(opts?.employeeId ? { Id: opts.employeeId } : {}) },
         select: { Id: true },
       }),
       this.prisma.leaveType.findMany({

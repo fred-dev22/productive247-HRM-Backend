@@ -85,7 +85,7 @@ export class EmployeeService {
   // vrai membre du personnel, ne doit jamais apparaitre dans une liste ou
   // un selecteur (voir migration IsSystem + prisma/backfill-employee-is-system.ts).
   findAll() {
-    return this.prisma.employee.findMany({ where: { IsSystem: false } });
+    return this.prisma.employee.findMany({ where: { IsSystem: false, IsDeleted: false } });
   }
 
   // Annuaire minimal, ouvert a tout employe authentifie (pas de permission
@@ -93,9 +93,14 @@ export class EmployeeService {
   // interimaire (n'importe qui peut soumettre une demande pour n'importe
   // qui, decision du 01/08) sans exposer les champs sensibles (date de
   // naissance, numero de piece d'identite, etc.) que renvoie findAll().
+  // N'exclut plus les employes Inactive (decision ulterieure) : ils
+  // doivent rester visibles dans les selecteurs (griese, non cliquables,
+  // voir front) plutot que disparaitre silencieusement — Status est donc
+  // renvoye pour que le front sache griser. Seuls IsSystem/IsDeleted
+  // restent des exclusions dures (comptes techniques / supprimes).
   findDirectory() {
     return this.prisma.employee.findMany({
-      where: { Status: 'Active', IsSystem: false },
+      where: { IsSystem: false, IsDeleted: false },
       select: {
         Id: true,
         FirstName: true,
@@ -104,6 +109,7 @@ export class EmployeeService {
         EmployeeNumber: true,
         OrganizationUnitId: true,
         EmployeeCategoryId: true,
+        Status: true,
         // Necessaire au calcul (cote frontend, apercu avant soumission) de
         // l'ajout du week-end au decompte de conges pour un beneficiaire
         // "local" — voir utils/calendar.ts et computeWorkingDays.
@@ -121,7 +127,7 @@ export class EmployeeService {
       return [];
     }
     return this.prisma.employee.findMany({
-      where: { OrganizationUnitId: { in: unitIds }, IsSystem: false },
+      where: { OrganizationUnitId: { in: unitIds }, IsSystem: false, IsDeleted: false },
     });
   }
 
@@ -147,7 +153,7 @@ export class EmployeeService {
 
   async findOne(id: string) {
     const employee = await this.prisma.employee.findUnique({ where: { Id: id } });
-    if (!employee) {
+    if (!employee || employee.IsDeleted) {
       throw new NotFoundException(`Employé ${id} introuvable`);
     }
     return employee;
@@ -177,6 +183,12 @@ export class EmployeeService {
   }
 
   async update(id: string, dto: UpdateEmployeeDto, modifiedBy: string) {
+    // Meme regle que remove() ci-dessous : le formulaire d'edition permet
+    // aussi de changer le Statut vers Inactive (dropdown), pas seulement le
+    // bouton Desactiver dedie — les deux portes doivent etre bloquees.
+    if (id === modifiedBy && dto.Status === 'Inactive') {
+      throw new BadRequestException('Vous ne pouvez pas désactiver votre propre compte.');
+    }
     const existing = await this.findOne(id);
     const FirstName = dto.FirstName ?? existing.FirstName;
     const LastName = dto.LastName ?? existing.LastName;
@@ -208,11 +220,33 @@ export class EmployeeService {
   // Soft delete : l'employé reste en base (Status=Inactive) — un hard delete
   // casserait les références historiques (congés, missions, notes de frais
   // passées) qui pointent vers cet Id.
-  async remove(id: string) {
+  async remove(id: string, requesterId: string) {
+    if (id === requesterId) {
+      throw new BadRequestException('Vous ne pouvez pas désactiver votre propre compte.');
+    }
     await this.findOne(id);
     const employee = await this.prisma.employee.update({
       where: { Id: id },
       data: { Status: 'Inactive', PositionId: null, ModifiedAt: new Date() },
+    });
+    this.realtime.broadcastCompany('data:changed', { domain: 'employee' });
+    return employee;
+  }
+
+  // Suppression definitive (Lot I) — distincte de remove()/deactivate
+  // ci-dessus (Status=Inactive, reversible depuis l'app). IsDeleted=true
+  // cache l'employe de tout l'app (findAll/findDirectory/findTeam/findOne
+  // filtrent deja IsDeleted:false) sans toucher a l'historique (conges,
+  // missions, notes de frais passees continuent de pointer vers son Id) —
+  // seul un dev peut repasser IsDeleted a false directement en base.
+  async softDelete(id: string, deletedBy: string) {
+    if (id === deletedBy) {
+      throw new BadRequestException('Vous ne pouvez pas supprimer votre propre compte.');
+    }
+    await this.findOne(id);
+    const employee = await this.prisma.employee.update({
+      where: { Id: id },
+      data: { IsDeleted: true, DeletedBy: deletedBy, DeletedAt: new Date() },
     });
     this.realtime.broadcastCompany('data:changed', { domain: 'employee' });
     return employee;

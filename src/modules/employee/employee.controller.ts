@@ -80,7 +80,17 @@ export class EmployeeController {
 
   @Delete(':id')
   @RequirePermission('EMPLOYE_DESACTIVER')
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  remove(@Param('id') id: string, @CurrentUser('employeeId') requesterId: string) {
+    return this.service.remove(id, requesterId);
+  }
+
+  // Suppression definitive (Lot I) — distincte de DELETE /:id ci-dessus (qui
+  // desactive). Route separee : DELETE /:id est deja pris par la
+  // desactivation et ne doit pas changer de sens pour ne pas casser
+  // l'existant.
+  @Delete(':id/permanent')
+  @RequirePermission('EMPLOYE_SUPPRIMER')
+  softDelete(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
+    return this.service.softDelete(id, employeeId);
   }
 }

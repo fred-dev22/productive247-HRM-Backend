@@ -53,6 +53,14 @@ model OrganizationUnit {
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
+  // Suppression (Lot I) — distincte de Status='Inactive' (desactivation,
+  // reversible depuis l'app). IsDeleted cache definitivement la ligne de
+  // toute l'UI ; seul un dev peut la repasser a false directement en base.
+  // Pas de relation Prisma vers Employee pour DeletedBy (juste l'Id brut) :
+  // ce champ n'est jamais affiche dans l'app, seulement consulte par un dev.
+  IsDeleted Boolean   @default(false)
+  DeletedBy String?   @db.UniqueIdentifier
+  DeletedAt DateTime? @db.DateTime2
 
   parent   OrganizationUnit?  @relation("OrganizationUnitHierarchy", fields: [ParentId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   children OrganizationUnit[] @relation("OrganizationUnitHierarchy")
@@ -197,6 +205,10 @@ model Employee {
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
+  // Suppression (Lot I) — voir OrganizationUnit ci-dessus pour la justification.
+  IsDeleted Boolean   @default(false)
+  DeletedBy String?   @db.UniqueIdentifier
+  DeletedAt DateTime? @db.DateTime2
 
   position         Position?         @relation(fields: [PositionId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   organizationUnit OrganizationUnit  @relation("EmployeeOrganizationUnit", fields: [OrganizationUnitId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
@@ -756,6 +768,10 @@ model LeaveRequest {
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
+  // Suppression (Lot I) — voir OrganizationUnit pour la justification.
+  IsDeleted Boolean   @default(false)
+  DeletedBy String?   @db.UniqueIdentifier
+  DeletedAt DateTime? @db.DateTime2
 
   employee        Employee      @relation("LeaveRequestEmployee", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   leaveType       LeaveType     @relation(fields: [LeaveTypeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
@@ -806,6 +822,10 @@ model MissionOrder {
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
+  // Suppression (Lot I) — voir OrganizationUnit pour la justification.
+  IsDeleted Boolean   @default(false)
+  DeletedBy String?   @db.UniqueIdentifier
+  DeletedAt DateTime? @db.DateTime2
 
   employee     Employee      @relation("MissionOrderEmployee", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   approvalPool ApprovalPool? @relation(fields: [ApprovalPoolId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
@@ -841,6 +861,10 @@ model ExpenseReport {
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
+  // Suppression (Lot I) — voir OrganizationUnit pour la justification.
+  IsDeleted Boolean   @default(false)
+  DeletedBy String?   @db.UniqueIdentifier
+  DeletedAt DateTime? @db.DateTime2
 
   missionOrder MissionOrder? @relation(fields: [MissionOrderId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   employee     Employee      @relation("ExpenseReportEmployee", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)

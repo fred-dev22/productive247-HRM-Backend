@@ -117,4 +117,13 @@ export class ExpenseReportController {
   ) {
     return this.service.cancel(id, employeeId, permissions.has('FRAIS_VOIR_TOUT'));
   }
+
+  // Suppression definitive (Lot I) — distincte de DELETE /:id ci-dessus
+  // (reservee aux brouillons). Route separee pour ne pas changer le sens de
+  // l'existant.
+  @Delete(':id/permanent')
+  @RequirePermission('FRAIS_SUPPRIMER')
+  softDelete(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
+    return this.service.softDelete(id, employeeId);
+  }
 }

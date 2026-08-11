@@ -43,10 +43,22 @@ export class PermissionGuard implements CanActivate {
 
     const user = await this.prisma.user.findUnique({
       where: { Id: userId },
-      include: { userPermissions: { include: { permission: true } } },
+      include: { userPermissions: { include: { permission: true } }, employee: true },
     });
 
     if (!user || !user.IsActive) {
+      throw new UnauthorizedException('Ce compte a été désactivé');
+    }
+    // Meme logique que AuthService.login (Lot I) : un employe supprime
+    // definitivement doit perdre l'acces immediatement, meme s'il a deja un
+    // JWT valide en cours — pas besoin d'attendre son expiration.
+    if (user.employee?.IsDeleted) {
+      throw new UnauthorizedException('Ce compte a été supprimé');
+    }
+    // Meme principe pour un employe desactive (Status='Inactive', reversible
+    // depuis l'app) : la perte d'acces doit etre immediate, pas seulement au
+    // prochain login.
+    if (user.employee?.Status === 'Inactive') {
       throw new UnauthorizedException('Ce compte a été désactivé');
     }
 

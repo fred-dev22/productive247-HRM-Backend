@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
 import { LeaveTransactionService } from '../leave-transaction/leave-transaction.service';
 import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { formatDateFr } from '../mail/email-templates';
 import { generateApprovalToken } from '../../common/approval-token';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
@@ -43,6 +44,7 @@ export class LeaveRequestService {
     private readonly approvalPoolService: ApprovalPoolService,
     private readonly leaveTransactionService: LeaveTransactionService,
     private readonly notifier: WorkflowNotifierService,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────
@@ -228,7 +230,13 @@ export class LeaveRequestService {
   ): Promise<string> {
     if (!member.InterimEmployeeId) return member.EmployeeId;
     const onApprovedLeave = await this.prisma.leaveRequest.findFirst({
-      where: { EmployeeId: member.EmployeeId, Status: 'Approved', StartDate: { lte: at }, EndDate: { gte: at } },
+      where: {
+        EmployeeId: member.EmployeeId,
+        Status: 'Approved',
+        StartDate: { lte: at },
+        EndDate: { gte: at },
+        IsDeleted: false,
+      },
     });
     return onApprovedLeave ? member.InterimEmployeeId : member.EmployeeId;
   }
@@ -265,6 +273,7 @@ export class LeaveRequestService {
         Id: excludeId ? { not: excludeId } : undefined,
         StartDate: { lte: endDate },
         EndDate: { gte: startDate },
+        IsDeleted: false,
       },
     });
     if (overlapping) {
@@ -382,12 +391,37 @@ export class LeaveRequestService {
     return this.prisma.leaveRequest.delete({ where: { Id: id } });
   }
 
+  // Suppression definitive (Lot I) — distincte de remove() ci-dessus (hard
+  // delete, reserve aux brouillons). Ici, n'importe quelle demande (quel que
+  // soit son statut) peut etre cachee de tout l'app (IsDeleted=true) sans
+  // toucher a l'historique des soldes/notifications qui pointent vers son
+  // Id — reversible uniquement en base par un dev.
+  // Une demande approuvee (ou tout statut derive : Registered/Done/
+  // Regularized) ne doit plus jamais pouvoir disparaitre — c'est la trace
+  // qui justifie le solde de conges consomme et l'historique RH. Seules les
+  // demandes qui n'ont jamais ete approuvees (brouillon, en cours, refusee,
+  // retournee, annulee) restent supprimables definitivement.
+  private static readonly APPROVED_LINEAGE = ['Approved', 'Registered', 'Done', 'Regularized'];
+
+  async softDelete(id: string, deletedBy: string) {
+    const existing = await this.findOneRaw(id);
+    if (LeaveRequestService.APPROVED_LINEAGE.includes(existing.Status)) {
+      throw new BadRequestException('Une demande approuvée ne peut plus être supprimée.');
+    }
+    const leaveRequest = await this.prisma.leaveRequest.update({
+      where: { Id: id },
+      data: { IsDeleted: true, DeletedBy: deletedBy, DeletedAt: new Date() },
+    });
+    this.realtime.broadcastCompany('data:changed', { domain: 'leave' });
+    return leaveRequest;
+  }
+
   private async findOneRaw(id: string) {
     // include leaveType : sans ça toContext() (emails/notifications) ne
     // peut jamais afficher le type de congé, il retombe systematiquement
     // sur le fallback '—'.
     const leaveRequest = await this.prisma.leaveRequest.findUnique({ where: { Id: id }, include: { leaveType: true } });
-    if (!leaveRequest) {
+    if (!leaveRequest || leaveRequest.IsDeleted) {
       throw new NotFoundException(`Demande de congé ${id} introuvable`);
     }
     return leaveRequest;
@@ -403,7 +437,7 @@ export class LeaveRequestService {
         createdByEmployee: { select: { Id: true, FullName: true } },
       },
     });
-    if (!leaveRequest) {
+    if (!leaveRequest || leaveRequest.IsDeleted) {
       throw new NotFoundException(`Demande de congé ${id} introuvable`);
     }
     const decisions = await this.prisma.approvalDecision.findMany({
@@ -421,7 +455,7 @@ export class LeaveRequestService {
   // le beneficiaire.
   async findMine(employeeId: string) {
     const requests = await this.prisma.leaveRequest.findMany({
-      where: { OR: [{ EmployeeId: employeeId }, { CreatedBy: employeeId }] },
+      where: { OR: [{ EmployeeId: employeeId }, { CreatedBy: employeeId }], IsDeleted: false },
       include: {
         leaveType: true,
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
@@ -436,7 +470,7 @@ export class LeaveRequestService {
     const unitIds = await this.collectManagedUnitIds(managerEmployeeId);
     if (unitIds.length === 0) return [];
     const requests = await this.prisma.leaveRequest.findMany({
-      where: { employee: { OrganizationUnitId: { in: unitIds } } },
+      where: { employee: { OrganizationUnitId: { in: unitIds } }, IsDeleted: false },
       include: LEAVE_REQUEST_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
@@ -478,6 +512,7 @@ export class LeaveRequestService {
 
   async findAll() {
     const requests = await this.prisma.leaveRequest.findMany({
+      where: { IsDeleted: false },
       include: LEAVE_REQUEST_INCLUDE,
       orderBy: { CreatedAt: 'desc' },
     });
@@ -486,7 +521,7 @@ export class LeaveRequestService {
 
   async findPendingForMe(employeeId: string) {
     const inApproval = await this.prisma.leaveRequest.findMany({
-      where: { Status: { in: ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'] } },
+      where: { Status: { in: ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'] }, IsDeleted: false },
       include: {
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
         createdByEmployee: { select: { Id: true, FullName: true } },

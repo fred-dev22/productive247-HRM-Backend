@@ -34,7 +34,12 @@ export class AuthService {
       include: { employee: true, employeeCategory: true },
     });
 
-    if (!user || !user.IsActive) {
+    // Meme message generique que !user/!IsActive ci-dessous (pas de fuite
+    // d'info sur l'existence du compte) — un employe supprime definitivement
+    // (Lot I) ou desactive (Status='Inactive') ne doit plus jamais pouvoir se
+    // connecter, sans reconnexion requise pour que ca prenne effet
+    // immediatement.
+    if (!user || !user.IsActive || user.employee?.IsDeleted || user.employee?.Status === 'Inactive') {
       throw new UnauthorizedException('Identifiants invalides');
     }
 
@@ -122,8 +127,11 @@ export class AuthService {
     const genericResult = {
       message: 'Si un compte existe pour cet email, un lien de réinitialisation vient de lui être envoyé.',
     };
-    const user = await this.prisma.user.findUnique({ where: { Email: dto.email } });
-    if (!user || !user.IsActive) {
+    const user = await this.prisma.user.findUnique({
+      where: { Email: dto.email },
+      include: { employee: true },
+    });
+    if (!user || !user.IsActive || user.employee?.IsDeleted || user.employee?.Status === 'Inactive') {
       return genericResult;
     }
 

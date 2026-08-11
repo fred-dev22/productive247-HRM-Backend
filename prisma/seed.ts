@@ -17,20 +17,24 @@ const PERMISSIONS: { Code: string; Label: string; Module: string }[] = [
   { Code: 'CONGE_VOIR_EQUIPE', Label: "Voir les demandes de congé de son équipe", Module: 'Congés' },
   { Code: 'CONGE_VOIR_TOUT', Label: 'Voir toutes les demandes de congé', Module: 'Congés' },
   { Code: 'CONGE_VALIDER', Label: 'Valider / rejeter une demande de congé', Module: 'Congés' },
+  { Code: 'CONGE_SUPPRIMER', Label: 'Supprimer définitivement une demande de congé', Module: 'Congés' },
 
   { Code: 'MISSION_VOIR_EQUIPE', Label: "Voir les ordres de mission de son équipe", Module: 'Missions' },
   { Code: 'MISSION_VOIR_TOUT', Label: 'Voir tous les ordres de mission', Module: 'Missions' },
   { Code: 'MISSION_VALIDER', Label: 'Valider / rejeter un ordre de mission', Module: 'Missions' },
+  { Code: 'MISSION_SUPPRIMER', Label: 'Supprimer définitivement un ordre de mission', Module: 'Missions' },
 
   { Code: 'FRAIS_VOIR_EQUIPE', Label: "Voir les notes de frais de son équipe", Module: 'Notes de frais' },
   { Code: 'FRAIS_VOIR_TOUT', Label: 'Voir toutes les notes de frais', Module: 'Notes de frais' },
   { Code: 'FRAIS_VALIDER', Label: 'Valider / rejeter une note de frais', Module: 'Notes de frais' },
+  { Code: 'FRAIS_SUPPRIMER', Label: 'Supprimer définitivement une note de frais', Module: 'Notes de frais' },
 
   { Code: 'EMPLOYE_VOIR_EQUIPE', Label: 'Voir la fiche des employés de son équipe', Module: 'Employés' },
   { Code: 'EMPLOYE_VOIR_TOUT', Label: 'Voir la fiche de tous les employés', Module: 'Employés' },
   { Code: 'EMPLOYE_CREER', Label: 'Créer un employé', Module: 'Employés' },
   { Code: 'EMPLOYE_MODIFIER', Label: 'Modifier un employé', Module: 'Employés' },
   { Code: 'EMPLOYE_DESACTIVER', Label: 'Désactiver un employé', Module: 'Employés' },
+  { Code: 'EMPLOYE_SUPPRIMER', Label: 'Supprimer définitivement un employé', Module: 'Employés' },
   { Code: 'EMPLOYE_COMPTE_CREER', Label: "Créer un compte d'accès système pour un employé", Module: 'Employés' },
   { Code: 'EMPLOYE_PERMISSION_GERER', Label: 'Gérer les permissions individuelles des employés', Module: 'Employés' },
 
@@ -40,6 +44,7 @@ const PERMISSIONS: { Code: string; Label: string; Module: string }[] = [
   { Code: 'ENTITE_SOUMETTRE', Label: 'Soumettre une entité pour approbation', Module: 'Entités' },
   { Code: 'ENTITE_APPROUVER', Label: 'Approuver / rejeter une entité', Module: 'Entités' },
   { Code: 'ENTITE_DESACTIVER', Label: 'Désactiver une entité', Module: 'Entités' },
+  { Code: 'ENTITE_SUPPRIMER', Label: 'Supprimer définitivement une entité', Module: 'Entités' },
 
   { Code: 'CATEGORIE_GERER', Label: 'Gérer les catégories et leurs permissions', Module: 'Administration' },
 
@@ -74,6 +79,9 @@ const DIRECTEUR_RH_PERMISSIONS = [
   ...ADMIN_RH_PERMISSIONS,
   'ENTITE_APPROUVER', 'ENTITE_DESACTIVER',
   'EMPLOYE_PERMISSION_GERER', 'CATEGORIE_GERER',
+  // Suppression definitive (Lot I) — reservee au palier le plus eleve : plus
+  // severe qu'une desactivation, non reversible depuis l'app.
+  'CONGE_SUPPRIMER', 'MISSION_SUPPRIMER', 'FRAIS_SUPPRIMER', 'EMPLOYE_SUPPRIMER', 'ENTITE_SUPPRIMER',
 ];
 
 // Catalogue configurable des categories d'employe (voir decision du 29/07 :
