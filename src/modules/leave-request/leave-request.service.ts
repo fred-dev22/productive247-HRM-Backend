@@ -398,10 +398,16 @@ export class LeaveRequestService {
   // Id — reversible uniquement en base par un dev.
   // Une demande approuvee (ou tout statut derive : Registered/Done/
   // Regularized) ne doit plus jamais pouvoir disparaitre — c'est la trace
-  // qui justifie le solde de conges consomme et l'historique RH. Seules les
-  // demandes qui n'ont jamais ete approuvees (brouillon, en cours, refusee,
+  // qui justifie le solde de conges consomme et l'historique RH. InApprovalN2+
+  // est inclus aussi : y arriver implique qu'un validateur (N1 au minimum) a
+  // deja approuve une etape, sa decision ne doit pas pouvoir etre effacee
+  // sous lui (decision du 12/08). Seules les demandes jamais approuvees par
+  // personne (brouillon, en attente du tout premier validateur, refusee,
   // retournee, annulee) restent supprimables definitivement.
-  private static readonly APPROVED_LINEAGE = ['Approved', 'Registered', 'Done', 'Regularized'];
+  private static readonly APPROVED_LINEAGE = [
+    'Approved', 'Registered', 'Done', 'Regularized',
+    'InApprovalN2', 'InApprovalN3', 'InApprovalN4',
+  ];
 
   async softDelete(id: string, deletedBy: string) {
     const existing = await this.findOneRaw(id);

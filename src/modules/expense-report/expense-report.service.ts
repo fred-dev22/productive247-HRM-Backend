@@ -210,13 +210,18 @@ export class ExpenseReportService {
   // l'historique — reversible uniquement en base par un dev.
   // Une note approuvee (ou remboursee) ne doit plus jamais pouvoir
   // disparaitre — meme raisonnement que LeaveRequestService.softDelete
-  // (Lot I) : c'est la trace qui justifie le remboursement.
-  private static readonly APPROVED_LINEAGE = ['Approved', 'Reimbursed'];
+  // (Lot I) : c'est la trace qui justifie le remboursement. InApprovalN2+
+  // est inclus aussi : y arriver implique qu'un validateur (N1 au minimum)
+  // a deja approuve une etape, sa decision ne doit pas pouvoir etre effacee
+  // sous lui (decision du 12/08).
+  private static readonly APPROVED_LINEAGE = [
+    'Approved', 'Reimbursed', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4',
+  ];
 
   async softDelete(id: string, deletedBy: string) {
     const existing = await this.findOneRaw(id);
     if (ExpenseReportService.APPROVED_LINEAGE.includes(existing.Status)) {
-      throw new BadRequestException('Une note de frais approuvée ne peut plus être supprimée.');
+      throw new BadRequestException('Une note de frais déjà approuvée par un validateur ne peut plus être supprimée.');
     }
     const report = await this.prisma.expenseReport.update({
       where: { Id: id },

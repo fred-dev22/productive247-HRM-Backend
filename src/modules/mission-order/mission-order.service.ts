@@ -299,11 +299,16 @@ export class MissionOrderService {
   // l'historique — reversible uniquement en base par un dev.
   // Un ordre de mission approuve ne doit plus jamais pouvoir disparaitre —
   // meme raisonnement que LeaveRequestService.softDelete (Lot I) : c'est la
-  // trace qui justifie les indemnites versees.
+  // trace qui justifie les indemnites versees. InApprovalN2+ est inclus
+  // aussi : y arriver implique qu'un validateur (N1 au minimum) a deja
+  // approuve une etape, sa decision ne doit pas pouvoir etre effacee sous
+  // lui (decision du 12/08).
+  private static readonly APPROVED_LINEAGE = ['Approved', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'];
+
   async softDelete(id: string, deletedBy: string) {
     const existing = await this.findOneRaw(id);
-    if (existing.Status === 'Approved') {
-      throw new BadRequestException('Un ordre de mission approuvé ne peut plus être supprimé.');
+    if (MissionOrderService.APPROVED_LINEAGE.includes(existing.Status)) {
+      throw new BadRequestException('Un ordre de mission déjà approuvé par un validateur ne peut plus être supprimé.');
     }
     const missionOrder = await this.prisma.missionOrder.update({
       where: { Id: id },
