@@ -42,9 +42,9 @@ export class CreateLeaveTypeDto {
   DocumentRequired?: boolean;
 
   @IsOptional()
-  @IsInt({ message: 'Le délai de soumission doit être un nombre entier d\'heures' })
-  @Min(1, { message: 'Le délai de soumission doit être d\'au moins 1 heure' })
-  DocumentDeadlineHours?: number;
+  @IsInt({ message: 'Le délai de soumission doit être un nombre entier de jours' })
+  @Min(1, { message: 'Le délai de soumission doit être d\'au moins 1 jour' })
+  DocumentDeadlineDays?: number;
 
   @IsOptional()
   @IsBoolean()

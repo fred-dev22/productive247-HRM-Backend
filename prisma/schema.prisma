@@ -637,10 +637,10 @@ model LeaveType {
   DaysPerYear           Decimal  @db.Decimal(5, 2)
   DaysPerMonth          Decimal? @db.Decimal(5, 2)
   DocumentRequired      Boolean  @default(false)
-  // Delai (en heures, a partir du debut de l'absence) pour fournir le
+  // Delai (en jours, a partir du debut de l'absence) pour fournir le
   // justificatif quand DocumentRequired est actif — plan de tests #40
   // (volet parametrage du workflow Medical, mais applicable a tout type).
-  DocumentDeadlineHours Int?
+  DocumentDeadlineDays Int?
   CarryOverAllowed      Boolean  @default(false)
   CarryOverCap          Int      @default(0)
   MinNoticeDays         Int      @default(0)
