@@ -809,8 +809,8 @@ export class LeaveRequestService {
   }
 
   async reject(id: string, dto: DecideLeaveRequestDto, approverEmployeeId: string, canOverride: boolean) {
-    if (!dto.Comment || dto.Comment.trim().length < 10) {
-      throw new BadRequestException('Le motif du refus doit comporter au moins 10 caractères');
+    if (!dto.Comment || dto.Comment.trim().length === 0) {
+      throw new BadRequestException('Le motif du refus est requis');
     }
     const existing = await this.findOneRaw(id);
     await this.assertIsCurrentApprover(existing, approverEmployeeId, canOverride);
@@ -820,8 +820,8 @@ export class LeaveRequestService {
   }
 
   async return_(id: string, dto: DecideLeaveRequestDto, approverEmployeeId: string, canOverride: boolean) {
-    if (!dto.Comment || dto.Comment.trim().length < 10) {
-      throw new BadRequestException('Le commentaire doit comporter au moins 10 caractères');
+    if (!dto.Comment || dto.Comment.trim().length === 0) {
+      throw new BadRequestException('Le commentaire est requis');
     }
     const existing = await this.findOneRaw(id);
     await this.assertIsCurrentApprover(existing, approverEmployeeId, canOverride);

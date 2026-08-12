@@ -133,8 +133,8 @@ export class PublicApprovalService {
     if (decision.Decision !== 'Pending') {
       throw new BadRequestException('Cette demande a déjà été traitée — le lien reçu par email ne peut servir qu\'une fois');
     }
-    if ((dto.Decision === 'Rejected' || dto.Decision === 'Returned') && (!dto.Comment || dto.Comment.trim().length < 10)) {
-      throw new BadRequestException('Un commentaire d\'au moins 10 caractères est requis pour refuser ou retourner une demande');
+    if ((dto.Decision === 'Rejected' || dto.Decision === 'Returned') && (!dto.Comment || dto.Comment.trim().length === 0)) {
+      throw new BadRequestException('Un commentaire est requis pour refuser ou retourner une demande');
     }
 
     const approverEmployeeId = decision.ValidatedByEmployeeId;

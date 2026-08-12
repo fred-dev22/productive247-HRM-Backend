@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateExpenseTypeDto } from './dto/create-expense-type.dto';
 import { UpdateExpenseTypeDto } from './dto/update-expense-type.dto';
@@ -32,7 +32,12 @@ export class ExpenseTypeService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    const expenseType = await this.findOne(id);
+    if (expenseType.IsSystem) {
+      throw new BadRequestException(
+        `Le type de frais « ${expenseType.Name} » est un type système (secours par défaut) et ne peut pas être désactivé`,
+      );
+    }
     return this.prisma.expenseType.update({
       where: { Id: id },
       data: { IsActive: false },

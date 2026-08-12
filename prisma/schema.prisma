@@ -628,25 +628,25 @@ model Holiday {
 /// Types de conges configurables par l'admin RH. Chaque type a ses propres
 /// regles d'accumulation, de plafond et de validation.
 model LeaveType {
-  Id                    String   @id @default(uuid()) @db.UniqueIdentifier
-  Code                  String   @unique @db.NVarChar(20)
-  Name                  String   @db.NVarChar(100)
+  Id                   String   @id @default(uuid()) @db.UniqueIdentifier
+  Code                 String   @unique @db.NVarChar(20)
+  Name                 String   @db.NVarChar(100)
   // WorkflowType: Standard | Medical
-  WorkflowType          String   @db.NVarChar(20)
-  MonthlyAccrual        Boolean  @default(false)
-  DaysPerYear           Decimal  @db.Decimal(5, 2)
-  DaysPerMonth          Decimal? @db.Decimal(5, 2)
-  DocumentRequired      Boolean  @default(false)
+  WorkflowType         String   @db.NVarChar(20)
+  MonthlyAccrual       Boolean  @default(false)
+  DaysPerYear          Decimal  @db.Decimal(5, 2)
+  DaysPerMonth         Decimal? @db.Decimal(5, 2)
+  DocumentRequired     Boolean  @default(false)
   // Delai (en jours, a partir du debut de l'absence) pour fournir le
   // justificatif quand DocumentRequired est actif — plan de tests #40
   // (volet parametrage du workflow Medical, mais applicable a tout type).
   DocumentDeadlineDays Int?
-  CarryOverAllowed      Boolean  @default(false)
-  CarryOverCap          Int      @default(0)
-  MinNoticeDays         Int      @default(0)
-  Color                 String   @db.NVarChar(20)
-  IsActive              Boolean  @default(true)
-  IsSystem              Boolean  @default(false)
+  CarryOverAllowed     Boolean  @default(false)
+  CarryOverCap         Int      @default(0)
+  MinNoticeDays        Int      @default(0)
+  Color                String   @db.NVarChar(20)
+  IsActive             Boolean  @default(true)
+  IsSystem             Boolean  @default(false)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -953,6 +953,10 @@ model ExpenseType {
   // Unit: PerDay | PerTrip | PerItem
   Unit     String  @db.NVarChar(20)
   IsActive Boolean @default(true)
+  // "Autre" (catch-all) — toujours present et jamais desactivable, pour
+  // qu'une ligne de note de frais ait toujours un type disponible meme si
+  // la configuration a oublie un cas (decision du 12/08).
+  IsSystem Boolean @default(false)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2

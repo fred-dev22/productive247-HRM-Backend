@@ -601,8 +601,8 @@ export class MissionOrderService {
   }
 
   async reject(id: string, dto: DecideMissionOrderDto, approverEmployeeId: string, canOverride: boolean) {
-    if (!dto.Comment || dto.Comment.trim().length < 10) {
-      throw new BadRequestException('Le motif du refus doit comporter au moins 10 caractères');
+    if (!dto.Comment || dto.Comment.trim().length === 0) {
+      throw new BadRequestException('Le motif du refus est requis');
     }
     const existing = await this.findOneRaw(id);
     await this.assertIsCurrentApprover(existing, approverEmployeeId, canOverride);
@@ -612,8 +612,8 @@ export class MissionOrderService {
   }
 
   async return_(id: string, dto: DecideMissionOrderDto, approverEmployeeId: string, canOverride: boolean) {
-    if (!dto.Comment || dto.Comment.trim().length < 10) {
-      throw new BadRequestException('Le commentaire doit comporter au moins 10 caractères');
+    if (!dto.Comment || dto.Comment.trim().length === 0) {
+      throw new BadRequestException('Le commentaire est requis');
     }
     const existing = await this.findOneRaw(id);
     await this.assertIsCurrentApprover(existing, approverEmployeeId, canOverride);
