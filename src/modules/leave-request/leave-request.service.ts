@@ -579,20 +579,15 @@ export class LeaveRequestService {
     return this.routeToApproval(existing, employee, leaveType, requesterEmployeeId);
   }
 
+  // Solde insuffisant n'est pas bloquant ici non plus (decision du 12/08,
+  // meme traitement que routeToApproval) — la declaration est quand meme
+  // enregistree, le front affiche l'avertissement en rouge. La consommation
+  // reste plafonnee a 0 par adjustBalance (jamais de solde negatif en base).
   private async registerMedicalLeave(
     leaveRequest: Awaited<ReturnType<LeaveRequestService['findOneRaw']>>,
     leaveType: { Id: string; DaysPerYear: unknown },
     requesterEmployeeId: string,
   ) {
-    const daysPerYear = Number(leaveType.DaysPerYear);
-    if (daysPerYear > 0) {
-      const balance = await this.leaveTransactionService.getBalance(leaveRequest.EmployeeId, leaveType.Id);
-      if (balance < Number(leaveRequest.DaysCount)) {
-        throw new BadRequestException(
-          `Solde insuffisant (${balance} jour(s) disponible(s) pour ${Number(leaveRequest.DaysCount)} demandé(s))`,
-        );
-      }
-    }
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.leaveRequest.update({
         where: { Id: leaveRequest.Id },

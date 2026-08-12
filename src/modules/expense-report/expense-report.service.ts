@@ -12,7 +12,6 @@ import { CreateExpenseReportDto } from './dto/create-expense-report.dto';
 import { UpdateExpenseReportDto } from './dto/update-expense-report.dto';
 import { DecideExpenseReportDto } from './dto/decide-expense-report.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
-import { ExpenseCeilingService } from '../expense-ceiling/expense-ceiling.service';
 
 const EDITABLE_STATUSES = ['Draft', 'Returned'];
 const CANCELLABLE_STATUSES = ['Draft', 'InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4', 'Approved'];
@@ -22,9 +21,12 @@ const DEFAULT_CURRENCY = 'MGA';
 // stores/expenses.ts mapExpenseReport) — chaque mutation de statut doit donc
 // renvoyer les lignes, pas seulement les colonnes modifiées, sinon la carte
 // affichée localement après l'action perd son détail jusqu'au prochain fetch.
+// EmployeeCategoryId sur employee : necessaire au front pour resoudre le
+// plafond (ExpenseCeiling) applicable au beneficiaire, cote createur ET
+// validateur (voir decision du 12/08 : plafond non bloquant).
 const REPORT_INCLUDE = {
   lines: { include: { expenseType: true } },
-  employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+  employee: { select: { Id: true, FullName: true, EmployeeNumber: true, EmployeeCategoryId: true } },
   createdByEmployee: { select: { Id: true, FullName: true } },
 } as const;
 
@@ -35,7 +37,6 @@ export class ExpenseReportService {
     private readonly approvalPoolService: ApprovalPoolService,
     private readonly notifier: WorkflowNotifierService,
     private readonly realtime: RealtimeGateway,
-    private readonly ceilingService: ExpenseCeilingService,
   ) {}
 
   // ── Helpers ──────────────────────────────────────────────────────────
@@ -235,7 +236,7 @@ export class ExpenseReportService {
     const report = await this.prisma.expenseReport.findUnique({
       where: { Id: id },
       include: {
-        employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+        employee: { select: { Id: true, FullName: true, EmployeeNumber: true, EmployeeCategoryId: true } },
         createdByEmployee: { select: { Id: true, FullName: true } },
         lines: { include: { expenseType: true }, orderBy: { ExpenseDate: 'asc' } },
       },
@@ -261,7 +262,7 @@ export class ExpenseReportService {
     const reports = await this.prisma.expenseReport.findMany({
       where: { OR: [{ EmployeeId: employeeId }, { CreatedBy: employeeId }], IsDeleted: false },
       include: {
-        employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+        employee: { select: { Id: true, FullName: true, EmployeeNumber: true, EmployeeCategoryId: true } },
         createdByEmployee: { select: { Id: true, FullName: true } },
         lines: { include: { expenseType: true } },
       },
@@ -328,7 +329,7 @@ export class ExpenseReportService {
     const inApproval = await this.prisma.expenseReport.findMany({
       where: { Status: { in: ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'] }, IsDeleted: false },
       include: {
-        employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
+        employee: { select: { Id: true, FullName: true, EmployeeNumber: true, EmployeeCategoryId: true } },
         createdByEmployee: { select: { Id: true, FullName: true } },
         lines: { include: { expenseType: true } },
       },
@@ -347,26 +348,6 @@ export class ExpenseReportService {
     return this.attachTotals(result);
   }
 
-  // Plan de tests #21 : le plafond configure par categorie d'employe et type
-  // de depense (ExpenseCeiling) doit bloquer la soumission si depasse. Sans
-  // categorie assignee a l'employe, aucun plafond ne peut se resoudre — la
-  // soumission n'est alors pas bloquee sur ce critere.
-  private async assertWithinCeilings(reportId: string, employeeCategoryId: string | null) {
-    if (!employeeCategoryId) return;
-    const lines = await this.prisma.expenseLine.findMany({
-      where: { ExpenseReportId: reportId },
-      include: { expenseType: true },
-    });
-    for (const line of lines) {
-      const ceiling = await this.ceilingService.findByCategoryAndType(employeeCategoryId, line.ExpenseTypeId);
-      if (ceiling && Number(line.Amount) > Number(ceiling.MaxAmount)) {
-        throw new BadRequestException(
-          `Le montant de la ligne « ${line.expenseType.Name} » (${Number(line.Amount).toLocaleString('fr-FR')} ${line.Currency}) dépasse le plafond autorisé pour votre catégorie (${Number(ceiling.MaxAmount).toLocaleString('fr-FR')} ${ceiling.Currency}).`,
-        );
-      }
-    }
-  }
-
   // ── Workflow ─────────────────────────────────────────────────────────
 
   async submit(id: string, requesterEmployeeId: string, canOverride: boolean) {
@@ -382,8 +363,12 @@ export class ExpenseReportService {
       throw new BadRequestException('Ajoutez au moins une ligne de dépense avant de soumettre');
     }
 
+    // Le plafond par categorie d'employe (ExpenseCeiling) n'est plus bloquant
+    // a la soumission (decision du 12/08, meme traitement que le solde de
+    // conges) — la note est quand meme soumise, le front affiche
+    // l'avertissement en rouge (createur ET validateur), qui decide en
+    // connaissance de cause.
     const employee = await this.prisma.employee.findUniqueOrThrow({ where: { Id: existing.EmployeeId } });
-    await this.assertWithinCeilings(id, employee.EmployeeCategoryId);
     const pool = await this.approvalPoolService.findApplicablePool(employee.OrganizationUnitId, 'ExpenseReport');
     if (!pool) {
       throw new NotFoundException(
