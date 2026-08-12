@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsDateString,
   IsIn,
   IsNotEmpty,
@@ -7,7 +8,10 @@ import {
   IsString,
   IsUUID,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { CreateMissionExpenseLineDto } from './create-mission-expense-line.dto';
 
 const MISSION_CATEGORIES = ['National', 'International'];
 const TRANSPORT_MODES = ['PersonalCar', 'CompanyCar', 'PublicTransport', 'Plane', 'Other'];
@@ -51,4 +55,17 @@ export class CreateMissionOrderDto {
   @IsOptional()
   @IsString()
   Currency?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateMissionExpenseLineDto)
+  ExpenseLines?: CreateMissionExpenseLineDto[];
+
+  // Optionnel : mission accompagnant (plan de test #22, ex: le chauffeur
+  // d'un directeur). Cree automatiquement un second ordre de mission, memes
+  // dates/destination/categorie, pour cet employe.
+  @IsOptional()
+  @IsUUID()
+  AssociatedEmployeeId?: string;
 }

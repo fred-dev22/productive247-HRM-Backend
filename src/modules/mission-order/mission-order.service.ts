@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '../../../prisma/generated/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
 import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
@@ -18,6 +19,8 @@ const EDITABLE_STATUSES = ['Draft', 'Returned'];
 const CANCELLABLE_STATUSES = ['Draft', 'InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4', 'Approved'];
 const DEFAULT_CURRENCY = 'MGA';
 
+type TxClient = Prisma.TransactionClient | PrismaService;
+
 // Applique a chaque create/update mutant un ordre de mission — sans ça la
 // reponse renvoyee par l'endpoint (utilisee par le front pour patcher sa
 // liste en place) n'a pas employee et la ligne s'affiche avec un nom et des
@@ -25,6 +28,15 @@ const DEFAULT_CURRENCY = 'MGA';
 const MISSION_EMPLOYEE_INCLUDE = {
   employee: { select: { Id: true, FullName: true, EmployeeNumber: true } },
   createdByEmployee: { select: { Id: true, FullName: true } },
+  missionExpenseLines: { include: { expenseType: true } },
+  // Mission accompagnant (plan de test #22) — voir doc-comment du champ
+  // LinkedMissionOrderId dans schema.prisma.
+  linkedMissionOrder: {
+    select: {
+      Id: true, ReferenceCode: true, Destination: true, Status: true,
+      employee: { select: { Id: true, FullName: true } },
+    },
+  },
 } as const;
 
 export interface AllowanceLine {
@@ -69,10 +81,10 @@ export class MissionOrderService {
     };
   }
 
-  private async generateReferenceCode(): Promise<string> {
+  private async generateReferenceCode(client: TxClient = this.prisma): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = `OM-${year}-`;
-    const count = await this.prisma.missionOrder.count({
+    const count = await client.missionOrder.count({
       where: { ReferenceCode: { startsWith: prefix } },
     });
     return `${prefix}${String(count + 1).padStart(5, '0')}`;
@@ -223,30 +235,112 @@ export class MissionOrderService {
       );
     }
 
+    // Mission accompagnant (plan de test #22) — verifie l'existence de
+    // l'associe avant toute ecriture.
+    if (dto.AssociatedEmployeeId) {
+      if (dto.AssociatedEmployeeId === employeeId) {
+        throw new BadRequestException("L'accompagnant doit être différent du titulaire de la mission");
+      }
+      const associatedExists = await this.prisma.employee.findUnique({ where: { Id: dto.AssociatedEmployeeId } });
+      if (!associatedExists) {
+        throw new NotFoundException(`Employé ${dto.AssociatedEmployeeId} introuvable`);
+      }
+    }
+
     const departureDate = new Date(dto.DepartureDate);
     const returnDate = new Date(dto.ReturnDate);
     const daysCount = this.computeDays(departureDate, returnDate);
-    const referenceCode = await this.generateReferenceCode();
 
-    return this.prisma.missionOrder.create({
-      data: {
-        ReferenceCode: referenceCode,
-        EmployeeId: employeeId,
-        Destination: dto.Destination,
-        MissionCategory: dto.MissionCategory,
-        Purpose: dto.Purpose,
-        DepartureDate: departureDate,
-        ReturnDate: returnDate,
-        DaysCount: daysCount,
-        TransportModeGo: dto.TransportModeGo,
-        TransportModeReturn: dto.TransportModeReturn,
-        AdvanceRequested: dto.AdvanceRequested ?? 0,
-        Currency: dto.Currency ?? DEFAULT_CURRENCY,
-        Status: 'Draft',
-        CreatedBy: requesterEmployeeId,
-      },
-      include: MISSION_EMPLOYEE_INCLUDE,
+    const baseData = {
+      Destination: dto.Destination,
+      MissionCategory: dto.MissionCategory,
+      Purpose: dto.Purpose,
+      DepartureDate: departureDate,
+      ReturnDate: returnDate,
+      DaysCount: daysCount,
+      TransportModeGo: dto.TransportModeGo,
+      TransportModeReturn: dto.TransportModeReturn,
+      Currency: dto.Currency ?? DEFAULT_CURRENCY,
+      Status: 'Draft',
+      CreatedBy: requesterEmployeeId,
+    };
+
+    if (!dto.AssociatedEmployeeId) {
+      const referenceCode = await this.generateReferenceCode();
+      return this.prisma.missionOrder.create({
+        data: {
+          ...baseData,
+          ReferenceCode: referenceCode,
+          EmployeeId: employeeId,
+          AdvanceRequested: dto.AdvanceRequested ?? 0,
+          missionExpenseLines: dto.ExpenseLines?.length
+            ? {
+                create: dto.ExpenseLines.map((l) => ({
+                  ExpenseTypeId: l.ExpenseTypeId,
+                  Description: l.Description,
+                  Amount: l.Amount,
+                  CreatedBy: requesterEmployeeId,
+                })),
+              }
+            : undefined,
+        },
+        include: MISSION_EMPLOYEE_INCLUDE,
+      });
+    }
+
+    // Cree les deux ordres (titulaire + accompagnant) et les lie
+    // symetriquement en une seule transaction — chacun suit ensuite son
+    // propre workflow d'approbation independant (voir cascade dans submit()).
+    const { primaryId, associateId } = await this.prisma.$transaction(async (tx) => {
+      const primaryCode = await this.generateReferenceCode(tx);
+      const primary = await tx.missionOrder.create({
+        data: {
+          ...baseData,
+          ReferenceCode: primaryCode,
+          EmployeeId: employeeId,
+          AdvanceRequested: dto.AdvanceRequested ?? 0,
+          missionExpenseLines: dto.ExpenseLines?.length
+            ? {
+                create: dto.ExpenseLines.map((l) => ({
+                  ExpenseTypeId: l.ExpenseTypeId,
+                  Description: l.Description,
+                  Amount: l.Amount,
+                  CreatedBy: requesterEmployeeId,
+                })),
+              }
+            : undefined,
+        },
+      });
+      const associateCode = await this.generateReferenceCode(tx);
+      const associate = await tx.missionOrder.create({
+        data: {
+          ...baseData,
+          ReferenceCode: associateCode,
+          EmployeeId: dto.AssociatedEmployeeId as string,
+          AdvanceRequested: 0,
+        },
+      });
+      await tx.missionOrder.update({ where: { Id: primary.Id }, data: { LinkedMissionOrderId: associate.Id } });
+      await tx.missionOrder.update({ where: { Id: associate.Id }, data: { LinkedMissionOrderId: primary.Id } });
+      return { primaryId: primary.Id, associateId: associate.Id };
     });
+
+    // Email a l'accompagnant en dehors de la transaction (best-effort) : un
+    // echec d'envoi ne doit pas faire echouer la creation, deja actee en
+    // base.
+    const associateCtx = this.toContext({
+      Id: associateId,
+      ReferenceCode: '',
+      EmployeeId: dto.AssociatedEmployeeId as string,
+      CreatedBy: requesterEmployeeId,
+      Destination: dto.Destination,
+      DepartureDate: departureDate,
+      ReturnDate: returnDate,
+      DaysCount: daysCount,
+    });
+    await this.notifier.notifyAssociated(associateCtx, employee.FullName).catch(() => {});
+
+    return this.prisma.missionOrder.findUniqueOrThrow({ where: { Id: primaryId }, include: MISSION_EMPLOYEE_INCLUDE });
   }
 
   async update(id: string, dto: UpdateMissionOrderDto, requesterEmployeeId: string, canOverride: boolean) {
@@ -262,23 +356,39 @@ export class MissionOrderService {
     const returnDate = dto.ReturnDate ? new Date(dto.ReturnDate) : existing.ReturnDate;
     const daysCount = dto.DepartureDate || dto.ReturnDate ? this.computeDays(departureDate, returnDate) : existing.DaysCount;
 
-    return this.prisma.missionOrder.update({
-      where: { Id: id },
-      data: {
-        Destination: dto.Destination ?? existing.Destination,
-        MissionCategory: dto.MissionCategory ?? existing.MissionCategory,
-        Purpose: dto.Purpose ?? existing.Purpose,
-        DepartureDate: departureDate,
-        ReturnDate: returnDate,
-        DaysCount: daysCount,
-        TransportModeGo: dto.TransportModeGo ?? existing.TransportModeGo,
-        TransportModeReturn: dto.TransportModeReturn ?? existing.TransportModeReturn,
-        AdvanceRequested: dto.AdvanceRequested ?? existing.AdvanceRequested,
-        Currency: dto.Currency ?? existing.Currency,
-        ModifiedBy: requesterEmployeeId,
-        ModifiedAt: new Date(),
-      },
-      include: MISSION_EMPLOYEE_INCLUDE,
+    return this.prisma.$transaction(async (tx) => {
+      if (dto.ExpenseLines) {
+        await tx.missionExpenseLine.deleteMany({ where: { MissionOrderId: id } });
+        if (dto.ExpenseLines.length) {
+          await tx.missionExpenseLine.createMany({
+            data: dto.ExpenseLines.map((l) => ({
+              MissionOrderId: id,
+              ExpenseTypeId: l.ExpenseTypeId,
+              Description: l.Description,
+              Amount: l.Amount,
+              CreatedBy: requesterEmployeeId,
+            })),
+          });
+        }
+      }
+      return tx.missionOrder.update({
+        where: { Id: id },
+        data: {
+          Destination: dto.Destination ?? existing.Destination,
+          MissionCategory: dto.MissionCategory ?? existing.MissionCategory,
+          Purpose: dto.Purpose ?? existing.Purpose,
+          DepartureDate: departureDate,
+          ReturnDate: returnDate,
+          DaysCount: daysCount,
+          TransportModeGo: dto.TransportModeGo ?? existing.TransportModeGo,
+          TransportModeReturn: dto.TransportModeReturn ?? existing.TransportModeReturn,
+          AdvanceRequested: dto.AdvanceRequested ?? existing.AdvanceRequested,
+          Currency: dto.Currency ?? existing.Currency,
+          ModifiedBy: requesterEmployeeId,
+          ModifiedAt: new Date(),
+        },
+        include: MISSION_EMPLOYEE_INCLUDE,
+      });
     });
   }
 
@@ -324,6 +434,7 @@ export class MissionOrderService {
       include: {
         employee: { select: { Id: true, FullName: true, EmployeeNumber: true, EmployeeCategoryId: true } },
         createdByEmployee: { select: { Id: true, FullName: true } },
+        missionExpenseLines: { include: { expenseType: true } },
       },
     });
     if (!missionOrder || missionOrder.IsDeleted) {
@@ -438,6 +549,28 @@ export class MissionOrderService {
 
   // ── Workflow ─────────────────────────────────────────────────────────
 
+  // Mission accompagnant (plan de test #22) — soumettre le titulaire soumet
+  // aussi automatiquement la mission liee (encore en brouillon) : chacune
+  // suit ensuite son propre pool de validation independamment (statuts et
+  // emails separes). Le check de statut evite toute boucle si l'autre cote
+  // tentait le meme cascade (deja plus en Draft/Returned a ce moment-la).
+  // Best-effort : un echec cote associe (ex: pool non configure pour son
+  // entite) ne doit pas faire echouer la soumission du titulaire.
+  private async cascadeSubmitLinked(
+    existing: Awaited<ReturnType<MissionOrderService['findOneRaw']>>,
+    requesterEmployeeId: string,
+  ) {
+    if (!existing.LinkedMissionOrderId) return;
+    try {
+      const linked = await this.findOneRaw(existing.LinkedMissionOrderId);
+      if (!EDITABLE_STATUSES.includes(linked.Status)) return;
+      await this.submit(linked.Id, requesterEmployeeId, true);
+    } catch {
+      // silencieux : la mission de l'accompagnant reste en brouillon,
+      // soumissible manuellement plus tard depuis sa propre fiche.
+    }
+  }
+
   async submit(id: string, requesterEmployeeId: string, canOverride: boolean) {
     const existing = await this.findOneRaw(id);
     if (existing.EmployeeId !== requesterEmployeeId && existing.CreatedBy !== requesterEmployeeId && !canOverride) {
@@ -481,6 +614,7 @@ export class MissionOrderService {
         include: MISSION_EMPLOYEE_INCLUDE,
       });
       await this.notifier.notifyApproved(this.toContext(existing), { autoApproved: true });
+      await this.cascadeSubmitLinked(existing, requesterEmployeeId);
       return updated;
     }
 
@@ -514,6 +648,7 @@ export class MissionOrderService {
       return updated;
     });
     await this.notifier.notifySubmitted(this.toContext(existing), approverId, token);
+    await this.cascadeSubmitLinked(existing, requesterEmployeeId);
     return updated;
   }
 

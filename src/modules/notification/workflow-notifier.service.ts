@@ -268,6 +268,24 @@ export class WorkflowNotifierService {
     ]);
   }
 
+  // Mission accompagnant (plan de test #22) — a la CREATION (pas a la
+  // soumission), l'employe associe (ex: le chauffeur d'un directeur) est
+  // informe qu'un second ordre de mission a ete cree pour lui. ctx est le
+  // contexte de SA propre mission (beneficiaryId = lui), pas celle du
+  // titulaire principal — il verra ensuite les notifications habituelles
+  // (soumission, validation) sur cette meme mission comme n'importe quel
+  // demandeur.
+  async notifyAssociated(ctx: WorkflowContext, primaryEmployeeName: string) {
+    this.broadcastChanged(ctx.kind);
+    const beneficiary = await this.resolvePerson(ctx.beneficiaryId);
+    const title = 'Vous avez été associé à une mission';
+    const message = `Vous avez été associé à la mission de ${primaryEmployeeName} (${ctx.summary}).`;
+    await Promise.all([
+      this.notifyPeople([beneficiary], { type: ctx.kind, title, message, href: hrefMine(ctx) }),
+      this.emailPeople([beneficiary], { subject: title, message, accent: 'primary', chipLabel: 'Associé', ctx }),
+    ]);
+  }
+
   // Annulation : notifiee uniquement si quelqu'un d'autre que le beneficiaire
   // lui-meme a annule (typiquement un admin sur la demande d'un tiers) — un
   // auto-cancel n'a pas besoin de notifier son propre auteur.

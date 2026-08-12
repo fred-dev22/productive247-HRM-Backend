@@ -275,6 +275,8 @@ model Employee {
   expenseLinesCreated  ExpenseLine[] @relation("ExpenseLineCreatedBy")
   expenseLinesModified ExpenseLine[] @relation("ExpenseLineModifiedBy")
 
+  missionExpenseLinesCreated MissionExpenseLine[] @relation("MissionExpenseLineCreatedBy")
+
   employeeCategoriesCreated  EmployeeCategory[] @relation("EmployeeCategoryCreatedBy")
   employeeCategoriesModified EmployeeCategory[] @relation("EmployeeCategoryModifiedBy")
 
@@ -825,6 +827,17 @@ model MissionOrder {
   CurrentApprovalStep Int?
   RejectionReason     String?  @db.NVarChar(500)
 
+  // Mission accompagnant (plan de test #22) — lien symetrique optionnel vers
+  // l'autre ordre de mission cree en meme temps pour la personne associee
+  // (ex: le chauffeur d'un directeur), memes dates/destination/categorie
+  // mais approuve independamment par son propre pool. Rempli des deux cotes
+  // a la creation (A.LinkedMissionOrderId = B.Id et vice-versa) pour que la
+  // fiche de chacun retrouve l'autre sans distinction de sens. Pas de
+  // contrainte @unique : SQL Server rejette les NULL multiples sur une
+  // contrainte unique classique (contrairement a Postgres) — l'unicite du
+  // pairage est garantie cote application (create()), pas en base.
+  LinkedMissionOrderId String? @db.UniqueIdentifier
+
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedBy String?   @db.UniqueIdentifier
@@ -840,10 +853,37 @@ model MissionOrder {
   createdByEmployee  Employee  @relation("MissionOrderCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee? @relation("MissionOrderModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
-  expenseReports ExpenseReport[]
+  linkedMissionOrder     MissionOrder?  @relation("MissionOrderLink", fields: [LinkedMissionOrderId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  linkedFromMissionOrder MissionOrder[] @relation("MissionOrderLink")
+
+  expenseReports      ExpenseReport[]
+  missionExpenseLines MissionExpenseLine[]
 
   @@index([EmployeeId])
   @@index([ApprovalPoolId])
+  @@index([LinkedMissionOrderId])
+}
+
+/// Ligne de frais complementaire d'un ordre de mission — saisie a la
+/// creation pour justifier l'acompte demande (AdvanceRequested = per diem
+/// calcule + somme de ces lignes). Persistee pour tracabilite, au lieu
+/// d'etre jetee apres calcul du total (plan de test #18).
+model MissionExpenseLine {
+  Id             String  @id @default(uuid()) @db.UniqueIdentifier
+  MissionOrderId String  @db.UniqueIdentifier
+  ExpenseTypeId  String  @db.UniqueIdentifier
+  Description    String? @db.NVarChar(255)
+  Amount         Decimal @db.Decimal(18, 2)
+
+  CreatedBy String   @db.UniqueIdentifier
+  CreatedAt DateTime @default(now()) @db.DateTime2
+
+  missionOrder      MissionOrder @relation(fields: [MissionOrderId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  expenseType       ExpenseType  @relation(fields: [ExpenseTypeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdByEmployee Employee     @relation("MissionExpenseLineCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([MissionOrderId])
+  @@index([ExpenseTypeId])
 }
 
 /// Conteneur des depenses apres une mission. Peut etre lie a une
@@ -966,9 +1006,10 @@ model ExpenseType {
   createdByEmployee  Employee  @relation("ExpenseTypeCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee? @relation("ExpenseTypeModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
-  expenseLines    ExpenseLine[]
-  expenseConfigs  ExpenseConfig[]
-  expenseCeilings ExpenseCeiling[]
+  expenseLines        ExpenseLine[]
+  expenseConfigs      ExpenseConfig[]
+  expenseCeilings     ExpenseCeiling[]
+  missionExpenseLines MissionExpenseLine[]
 }
 
 /// Matrice de configuration des taux de frais : EmployeeCategory x
