@@ -126,15 +126,16 @@ async function fixEmployeeUserIdUniqueIndex() {
 async function main() {
   await fixEmployeeUserIdUniqueIndex();
 
-  const existingCategory = await prisma.employeeCategory.findFirst();
-  if (existingCategory) {
-    console.log('Des catégories existent déjà — seed ignoré.');
-    return;
-  }
-
   const existingAdminEmployee = await prisma.employee.findFirst({
     where: { Email: ADMIN_EMAIL },
   });
+
+  const existingCategory = await prisma.employeeCategory.findFirst();
+  if (existingCategory) {
+    if (existingAdminEmployee) await seedExpenseTypeAutre(existingAdminEmployee.Id);
+    console.log('Des catégories existent déjà — seed ignoré.');
+    return;
+  }
 
   // ── Permissions (catalogue fixe) ──────────────────────────────
   const permissionByCode = new Map<string, string>();
@@ -168,6 +169,7 @@ async function main() {
       );
       console.log(`Compte ${ADMIN_EMAIL} relié à la catégorie Directeur RH.`);
     }
+    await seedExpenseTypeAutre(existingAdminEmployee.Id);
     return;
   }
 
@@ -263,6 +265,8 @@ async function main() {
     }
   }
 
+  await seedExpenseTypeAutre(employeeId);
+
   // Le responsable de l'entite racine n'est PAS force sur l'admin technique —
   // il doit etre choisi deliberement depuis la fiche entite (le boss n'est
   // pas forcement le compte qui a lance le seed).
@@ -270,6 +274,27 @@ async function main() {
   console.log('Seeded first admin account:');
   console.log(`  Email:    ${ADMIN_EMAIL}`);
   console.log(`  Password: ${ADMIN_PASSWORD}`);
+}
+
+// Type de frais systeme "Autre" (Code AUTRE, IsSystem=true) — secours par
+// defaut toujours disponible dans le dropdown "Categorie" d'une ligne de
+// mission/note de frais, meme si la configuration a oublie un cas (decision
+// du 12/08). Idempotent et appele a chaque execution du seed (pas seulement
+// au tout premier bootstrap), pour ne jamais le manquer sur une base deja
+// peuplee (ancien role du script ponctuel backfill-expense-type-autre.ts,
+// desormais couvert directement ici).
+async function seedExpenseTypeAutre(createdBy: string) {
+  const existing = await prisma.expenseType.findFirst({ where: { Code: 'AUTRE' } });
+  if (existing) {
+    if (!existing.IsSystem || !existing.IsActive) {
+      await prisma.expenseType.update({ where: { Id: existing.Id }, data: { IsSystem: true, IsActive: true } });
+    }
+    return;
+  }
+  await prisma.expenseType.create({
+    data: { Code: 'AUTRE', Name: 'Autre', Unit: 'PerItem', IsActive: true, IsSystem: true, CreatedBy: createdBy },
+  });
+  console.log('Type de frais "Autre" créé (IsSystem=true).');
 }
 
 // Cree les categories + leurs CategoryPermission, retourne la table Nom -> Id
