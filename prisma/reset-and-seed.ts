@@ -4,12 +4,29 @@
 //
 // Usage : npm run db:reset -- --yes
 //
-// Double garde-fou : refuse si NODE_ENV=production, et exige le flag --yes
-// explicite (pas d'execution accidentelle via un simple "npm run db:reset").
+// Triple garde-fou : refuse si NODE_ENV=production, exige le flag --yes
+// explicite (pas d'execution accidentelle via un simple "npm run db:reset"),
+// et demande une confirmation manuelle "OUI" dans la console juste avant
+// d'effacer quoi que ce soit — un dernier arret pour relire l'URL de la base
+// ciblee (DATABASE_URL) avant de valider.
 import 'dotenv/config';
 import { execSync } from 'child_process';
+import { createInterface } from 'node:readline/promises';
 import { PrismaClient } from './generated/client';
 import { PrismaMssql } from '@prisma/adapter-mssql';
+
+async function confirmOrExit() {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  console.log(`Base ciblee : ${process.env.DATABASE_URL}`);
+  const answer = await rl.question(
+    'Ceci va EFFACER DEFINITIVEMENT toutes les donnees de cette base. Tapez OUI pour confirmer : ',
+  );
+  rl.close();
+  if (answer.trim() !== 'OUI') {
+    console.error('Confirmation non recue (il fallait taper exactement "OUI") — annulation.');
+    process.exit(1);
+  }
+}
 
 async function main() {
   if (process.env.NODE_ENV === 'production') {
@@ -23,6 +40,8 @@ async function main() {
     );
     process.exit(1);
   }
+
+  await confirmOrExit();
 
   const prisma = new PrismaClient({ adapter: new PrismaMssql(process.env.DATABASE_URL as string) });
 
