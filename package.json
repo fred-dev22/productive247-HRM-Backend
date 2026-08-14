@@ -19,7 +19,10 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "db:reset": "prisma db push && prisma generate && ts-node prisma/reset-and-seed.ts --yes && nest build"
+    "db:reset": "prisma db push && prisma generate && ts-node prisma/reset-and-seed.ts --yes && nest build",
+    "// db:reset": "DEV UNIQUEMENT — efface TOUTES les donnees de la base puis reseed (retour a l'etat du tout premier lancement). Ne JAMAIS lancer sur la base d'un client : perte de donnees irreversible. Refuse de tourner si NODE_ENV=production, voir prisma/reset-and-seed.ts.",
+    "db:init": "prisma db push && prisma generate && npx prisma db seed",
+    "// db:init": "Premier deploiement chez un client (base vide) : cree les tables (db push) puis lance le seed. Sans danger : le seed est idempotent, il ne touche a rien si des donnees existent deja (voir prisma/seed.ts) — donc aussi sans risque a relancer par erreur sur une base deja initialisee."
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
