@@ -37,6 +37,12 @@ export class LeaveRequestController {
     return this.service.findPendingForMe(employeeId);
   }
 
+  @Get('validated-by-me')
+  @RequirePermission('CONGE_VALIDER')
+  findValidatedByMe(@CurrentUser('employeeId') employeeId: string) {
+    return this.service.findValidatedByMe(employeeId);
+  }
+
   @Get()
   @RequirePermission('CONGE_VOIR_TOUT')
   findAll() {
