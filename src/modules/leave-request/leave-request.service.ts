@@ -548,6 +548,27 @@ export class LeaveRequestService {
     return this.attachBalanceFlags(result);
   }
 
+  // Demandes deja decidees par ce validateur (approuve/refuse/retourne), peu
+  // importe leur statut actuel — un validateur doit garder une trace
+  // permanente de ce qu'il a traite dans "à valider", pas seulement ce qui
+  // attend encore une action de sa part (voir findPendingForMe, qui lui
+  // reste volontairement limite aux etapes en cours pour que le badge de
+  // notification reste exact).
+  async findValidatedByMe(employeeId: string) {
+    const decisions = await this.prisma.approvalDecision.findMany({
+      where: { EntityType: 'LeaveRequest', ValidatedByEmployeeId: employeeId, Decision: { not: 'Pending' } },
+      select: { EntityId: true },
+    });
+    const requestIds = [...new Set(decisions.map((d) => d.EntityId))];
+    if (requestIds.length === 0) return [];
+    const requests = await this.prisma.leaveRequest.findMany({
+      where: { Id: { in: requestIds }, IsDeleted: false },
+      include: LEAVE_REQUEST_INCLUDE,
+      orderBy: { ModifiedAt: 'desc' },
+    });
+    return this.attachBalanceFlags(requests);
+  }
+
   // ── Workflow ─────────────────────────────────────────────────────────
 
   async submit(id: string, requesterEmployeeId: string, canActForOthers: boolean) {
