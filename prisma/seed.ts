@@ -3,101 +3,18 @@ import { randomUUID } from 'crypto';
 import { PrismaClient } from './generated/client';
 import { PrismaMssql } from '@prisma/adapter-mssql';
 import * as bcrypt from 'bcryptjs';
+import {
+  ADMIN_EMAIL,
+  ADMIN_PASSWORD,
+  CATEGORIES,
+  EXPENSE_TYPE_AUTRE,
+  PERMISSIONS,
+  ROOT_ORGANIZATION_UNIT,
+} from './seed-data';
 
 const prisma = new PrismaClient({
   adapter: new PrismaMssql(process.env.DATABASE_URL as string),
 });
-
-const ADMIN_EMAIL = 'admin@galana.com';
-const ADMIN_PASSWORD = 'Admin@2026!';
-
-// Catalogue fixe des permissions — jamais modifiable depuis l'UI, seule
-// l'association Categorie <-> Permission l'est (ecran Configuration > Catégories).
-const PERMISSIONS: { Code: string; Label: string; Module: string }[] = [
-  { Code: 'CONGE_VOIR_EQUIPE', Label: "Voir les demandes de congé de son équipe", Module: 'Congés' },
-  { Code: 'CONGE_VOIR_TOUT', Label: 'Voir toutes les demandes de congé', Module: 'Congés' },
-  { Code: 'CONGE_VALIDER', Label: 'Valider / rejeter une demande de congé', Module: 'Congés' },
-  { Code: 'CONGE_SUPPRIMER', Label: 'Supprimer définitivement une demande de congé', Module: 'Congés' },
-
-  { Code: 'MISSION_VOIR_EQUIPE', Label: "Voir les ordres de mission de son équipe", Module: 'Missions' },
-  { Code: 'MISSION_VOIR_TOUT', Label: 'Voir tous les ordres de mission', Module: 'Missions' },
-  { Code: 'MISSION_VALIDER', Label: 'Valider / rejeter un ordre de mission', Module: 'Missions' },
-  { Code: 'MISSION_SUPPRIMER', Label: 'Supprimer définitivement un ordre de mission', Module: 'Missions' },
-
-  { Code: 'FRAIS_VOIR_EQUIPE', Label: "Voir les notes de frais de son équipe", Module: 'Notes de frais' },
-  { Code: 'FRAIS_VOIR_TOUT', Label: 'Voir toutes les notes de frais', Module: 'Notes de frais' },
-  { Code: 'FRAIS_VALIDER', Label: 'Valider / rejeter une note de frais', Module: 'Notes de frais' },
-  { Code: 'FRAIS_SUPPRIMER', Label: 'Supprimer définitivement une note de frais', Module: 'Notes de frais' },
-
-  { Code: 'EMPLOYE_VOIR_EQUIPE', Label: 'Voir la fiche des employés de son équipe', Module: 'Employés' },
-  { Code: 'EMPLOYE_VOIR_TOUT', Label: 'Voir la fiche de tous les employés', Module: 'Employés' },
-  { Code: 'EMPLOYE_CREER', Label: 'Créer un employé', Module: 'Employés' },
-  { Code: 'EMPLOYE_MODIFIER', Label: 'Modifier un employé', Module: 'Employés' },
-  { Code: 'EMPLOYE_DESACTIVER', Label: 'Désactiver un employé', Module: 'Employés' },
-  { Code: 'EMPLOYE_SUPPRIMER', Label: 'Supprimer définitivement un employé', Module: 'Employés' },
-  { Code: 'EMPLOYE_COMPTE_CREER', Label: "Créer un compte d'accès système pour un employé", Module: 'Employés' },
-  { Code: 'EMPLOYE_PERMISSION_GERER', Label: 'Gérer les permissions individuelles des employés', Module: 'Employés' },
-
-  { Code: 'ENTITE_VOIR', Label: "Voir la structure organisationnelle", Module: 'Entités' },
-  { Code: 'ENTITE_CREER', Label: 'Créer une entité', Module: 'Entités' },
-  { Code: 'ENTITE_MODIFIER', Label: 'Modifier une entité', Module: 'Entités' },
-  { Code: 'ENTITE_SOUMETTRE', Label: 'Soumettre une entité pour approbation', Module: 'Entités' },
-  { Code: 'ENTITE_APPROUVER', Label: 'Approuver / rejeter une entité', Module: 'Entités' },
-  { Code: 'ENTITE_DESACTIVER', Label: 'Désactiver une entité', Module: 'Entités' },
-  { Code: 'ENTITE_SUPPRIMER', Label: 'Supprimer définitivement une entité', Module: 'Entités' },
-
-  { Code: 'CATEGORIE_GERER', Label: 'Gérer les catégories et leurs permissions', Module: 'Administration' },
-
-  { Code: 'CONFIG_CALENDRIER', Label: 'Configurer le calendrier', Module: 'Configuration' },
-  { Code: 'CONFIG_JOURS_FERIES', Label: 'Configurer les jours fériés', Module: 'Configuration' },
-  { Code: 'CONFIG_TYPES_CONGE', Label: 'Configurer les types de congé', Module: 'Configuration' },
-  { Code: 'CONFIG_CATEGORIES_EMPLOYE', Label: 'Configurer les catégories employé', Module: 'Configuration' },
-  { Code: 'CONFIG_FRAIS_MISSION', Label: 'Configurer les types et configs de frais / mission', Module: 'Configuration' },
-  { Code: 'CONFIG_METIERS_POSTES', Label: 'Configurer les métiers et postes', Module: 'Configuration' },
-
-  { Code: 'RAPPORT_VOIR', Label: 'Voir les rapports', Module: 'Rapports' },
-  { Code: 'RAPPORT_EXPORTER', Label: 'Exporter les rapports', Module: 'Rapports' },
-];
-
-const VALIDATEUR_PERMISSIONS = [
-  'CONGE_VOIR_EQUIPE', 'CONGE_VALIDER',
-  'MISSION_VOIR_EQUIPE', 'MISSION_VALIDER',
-  'FRAIS_VOIR_EQUIPE', 'FRAIS_VALIDER',
-  'EMPLOYE_VOIR_EQUIPE',
-];
-
-const ADMIN_RH_PERMISSIONS = [
-  ...VALIDATEUR_PERMISSIONS,
-  'CONGE_VOIR_TOUT', 'MISSION_VOIR_TOUT', 'FRAIS_VOIR_TOUT',
-  'EMPLOYE_VOIR_TOUT', 'EMPLOYE_CREER', 'EMPLOYE_MODIFIER', 'EMPLOYE_DESACTIVER', 'EMPLOYE_COMPTE_CREER',
-  'ENTITE_VOIR', 'ENTITE_CREER', 'ENTITE_MODIFIER', 'ENTITE_SOUMETTRE',
-  'CONFIG_CALENDRIER', 'CONFIG_JOURS_FERIES', 'CONFIG_TYPES_CONGE', 'CONFIG_CATEGORIES_EMPLOYE', 'CONFIG_FRAIS_MISSION', 'CONFIG_METIERS_POSTES',
-  'RAPPORT_VOIR', 'RAPPORT_EXPORTER',
-];
-
-const DIRECTEUR_RH_PERMISSIONS = [
-  ...ADMIN_RH_PERMISSIONS,
-  'ENTITE_APPROUVER', 'ENTITE_DESACTIVER',
-  'EMPLOYE_PERMISSION_GERER', 'CATEGORIE_GERER',
-  // Suppression definitive (Lot I) — reservee au palier le plus eleve : plus
-  // severe qu'une desactivation, non reversible depuis l'app.
-  'CONGE_SUPPRIMER', 'MISSION_SUPPRIMER', 'FRAIS_SUPPRIMER', 'EMPLOYE_SUPPRIMER', 'ENTITE_SUPPRIMER',
-];
-
-// Catalogue configurable des categories d'employe (voir decision du 29/07 :
-// "role et categorie c'est la meme chose" — une seule table qui porte a la
-// fois le taux de frais/perdiem (ExpenseConfig) ET le paquet de permissions
-// copie au user cree pour un employe de cette categorie). Librement
-// modifiable/ajoutable ensuite depuis l'ecran Configuration > Classification —
-// ceci n'est qu'un point de depart : les 4 memes paliers que l'ancien systeme
-// de roles mock cote front (employee/validator/hr_admin/hr_director, voir
-// decision du 29/07).
-const CATEGORIES: { Code: string; Name: string; Permissions: string[] }[] = [
-  { Code: 'EMPLOYE', Name: 'Employé', Permissions: [] },
-  { Code: 'MANAGER', Name: 'Manager', Permissions: VALIDATEUR_PERMISSIONS },
-  { Code: 'ADMIN-RH', Name: 'Admin RH', Permissions: ADMIN_RH_PERMISSIONS },
-  { Code: 'DIRECTEUR-RH', Name: 'Directeur RH', Permissions: DIRECTEUR_RH_PERMISSIONS },
-];
 
 // `Employee.UserId String? @unique` genere par `prisma db push` sur SQL
 // Server une UNIQUE CONSTRAINT classique (non filtree) — contrairement a
@@ -130,14 +47,18 @@ async function main() {
     where: { Email: ADMIN_EMAIL },
   });
 
-  const existingCategory = await prisma.employeeCategory.findFirst();
-  if (existingCategory) {
-    if (existingAdminEmployee) await seedExpenseTypeAutre(existingAdminEmployee.Id);
-    console.log('Des catégories existent déjà — seed ignoré.');
-    return;
-  }
-
   // ── Permissions (catalogue fixe) ──────────────────────────────
+  // Rejoue a CHAQUE execution du seed, avant tout retour anticipe : le
+  // catalogue est fige cote code mais evolue d'une version a l'autre, et une
+  // base deja initialisee (celle d'un client en production) doit recevoir les
+  // codes ajoutes depuis. Place apres le garde-fou "des categories existent
+  // deja", un nouveau code n'aurait jamais atteint aucune base existante et
+  // la fonctionnalite associee serait restee inaccessible sans qu'on
+  // comprenne pourquoi. L'upsert sur Code rend la boucle idempotente.
+  // NB : ceci ne fait qu'ajouter la permission au catalogue — l'attribuer aux
+  // comptes existants reste un geste separe (UserPermission), volontairement
+  // manuel (voir decision du 29/07 : les permissions d'un compte ne sont
+  // jamais re-synchronisees depuis sa categorie).
   const permissionByCode = new Map<string, string>();
   for (const p of PERMISSIONS) {
     const created = await prisma.permission.upsert({
@@ -148,6 +69,13 @@ async function main() {
     permissionByCode.set(p.Code, created.Id);
   }
   console.log(`Seeded ${PERMISSIONS.length} permissions.`);
+
+  const existingCategory = await prisma.employeeCategory.findFirst();
+  if (existingCategory) {
+    if (existingAdminEmployee) await seedExpenseTypeAutre(existingAdminEmployee.Id);
+    console.log('Des catégories existent déjà — bootstrap ignoré.');
+    return;
+  }
 
   if (existingAdminEmployee) {
     // Un employe admin existe deja (base anterieure a cette migration) mais
@@ -216,10 +144,7 @@ async function main() {
     await prisma.organizationUnit.create({
       data: {
         Id: orgUnitId,
-        Code: 'DG',
-        Name: 'Direction Generale',
-        Type: 'Direction',
-        Status: 'Active',
+        ...ROOT_ORGANIZATION_UNIT,
         CreatedBy: employeeId,
       },
     });
@@ -284,7 +209,7 @@ async function main() {
 // peuplee (ancien role du script ponctuel backfill-expense-type-autre.ts,
 // desormais couvert directement ici).
 async function seedExpenseTypeAutre(createdBy: string) {
-  const existing = await prisma.expenseType.findFirst({ where: { Code: 'AUTRE' } });
+  const existing = await prisma.expenseType.findFirst({ where: { Code: EXPENSE_TYPE_AUTRE.Code } });
   if (existing) {
     if (!existing.IsSystem || !existing.IsActive) {
       await prisma.expenseType.update({ where: { Id: existing.Id }, data: { IsSystem: true, IsActive: true } });
@@ -292,7 +217,7 @@ async function seedExpenseTypeAutre(createdBy: string) {
     return;
   }
   await prisma.expenseType.create({
-    data: { Code: 'AUTRE', Name: 'Autre', Unit: 'PerItem', IsActive: true, IsSystem: true, CreatedBy: createdBy },
+    data: { ...EXPENSE_TYPE_AUTRE, IsActive: true, IsSystem: true, CreatedBy: createdBy },
   });
   console.log('Type de frais "Autre" créé (IsSystem=true).');
 }
