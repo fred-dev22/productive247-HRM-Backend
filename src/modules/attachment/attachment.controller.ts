@@ -3,6 +3,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { AttachmentService } from './attachment.service';
 import { UploadAttachmentDto, ATTACHMENT_ENTITY_TYPES, type AttachmentEntityType } from './dto/upload-attachment.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { CurrentPermissions } from '../../common/decorators/current-permissions.decorator';
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 Mo — largement suffisant pour un justificatif scanne/photo.
 
@@ -16,19 +17,25 @@ export class AttachmentController {
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: UploadAttachmentDto,
     @CurrentUser('employeeId') employeeId: string,
+    @CurrentPermissions() permissions: Set<string>,
   ) {
     if (!file) {
       throw new BadRequestException('Aucun fichier reçu');
     }
-    return this.service.upload(dto.EntityType, dto.EntityId, file, employeeId);
+    return this.service.upload(dto.EntityType, dto.EntityId, file, employeeId, permissions);
   }
 
   @Get()
-  findByEntity(@Query('entityType') entityType: AttachmentEntityType, @Query('entityId') entityId: string) {
+  findByEntity(
+    @Query('entityType') entityType: AttachmentEntityType,
+    @Query('entityId') entityId: string,
+    @CurrentUser('employeeId') employeeId: string,
+    @CurrentPermissions() permissions: Set<string>,
+  ) {
     if (!ATTACHMENT_ENTITY_TYPES.includes(entityType)) {
       throw new BadRequestException("Le type d'entité indiqué est invalide");
     }
-    return this.service.findByEntity(entityType, entityId);
+    return this.service.findByEntity(entityType, entityId, employeeId, permissions);
   }
 
   @Delete(':id')

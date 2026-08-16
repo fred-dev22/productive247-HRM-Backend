@@ -299,6 +299,7 @@ model Employee {
 
   @@index([PositionId])
   @@index([OrganizationUnitId])
+  @@index([EmployeeCategoryId])
 }
 
 /// Compte utilisateur donnant acces a la plateforme AfrikEdge / Productive
@@ -1038,6 +1039,10 @@ model ExpenseConfig {
   modifiedByEmployee Employee? @relation("ExpenseConfigModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([EmployeeCategoryId, ExpenseTypeId, MissionCategory])
+  // L'index unique ci-dessus commence par EmployeeCategoryId : il ne sert
+  // donc pas les recherches par type de frais seul (ex. verifier qu'un
+  // ExpenseType est encore reference avant desactivation).
+  @@index([ExpenseTypeId])
 }
 
 /// Plafond de remboursement d'une note de frais (independant d'une mission)
@@ -1062,6 +1067,8 @@ model ExpenseCeiling {
   modifiedByEmployee Employee? @relation("ExpenseCeilingModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([EmployeeCategoryId, ExpenseTypeId])
+  // Meme raison que ExpenseConfig ci-dessus.
+  @@index([ExpenseTypeId])
 }
 
 // =========================================================================
