@@ -1,3 +1,28 @@
+// ===========================================================================
+// CAPTURE DU SCHEMA DEPLOYE CHEZ GALANA — NE PAS MODIFIER A LA MAIN.
+//
+// Ce fichier est le miroir de ce que la base du client contient REELLEMENT.
+// Il sert de point de reference (--from) pour generer les scripts SQL de
+// mise a jour, puisque nous n avons aucun acces a leur serveur pour lire son
+// schema directement.
+//
+// Cycle de vie (voir deploy/README.md) :
+//   1. generer le script de mise a jour depuis ce fichier ;
+//   2. l envoyer au deployeur ;
+//   3. APRES confirmation qu il a ete applique, et seulement la, recopier
+//      prisma/schema.prisma par-dessus ce fichier et commiter.
+//
+// Mettre a jour cette capture avant confirmation fait perdre le point de
+// reference : les diffs suivants sauteraient les modifications non appliquees
+// et le script casserait chez le client.
+//
+// DIVERGENCE CONNUE ET VOLONTAIRE : en base, Employee.UserId porte un INDEX
+// UNIQUE FILTRE (WHERE UserId IS NOT NULL) et non la contrainte unique que
+// decrit le `@unique` ci-dessous — Prisma ne sait pas exprimer un index
+// filtre. Si un futur diff regenere cette contrainte, le script d export la
+// remplace automatiquement (voir prisma/export-schema-sql.ts).
+// ===========================================================================
+
 generator client {
   provider = "prisma-client-js"
   output   = "./generated/client"
