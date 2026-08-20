@@ -66,7 +66,7 @@ export class CreateEmployeeDto {
   @MaxLength(150)
   Email: string;
 
-  @IsIn(['Permanent', 'FixedTerm', 'Internship', 'Freelance'])
+  @IsIn(['Permanent', 'FixedTerm', 'Internship', 'Freelance', 'Apprenticeship', 'WorkStudy'])
   ContractType: string;
 
   @Type(() => Date)

@@ -166,7 +166,7 @@ model Employee {
   MobilePhone     String?   @db.NVarChar(30)
   WorkPhone       String?   @db.NVarChar(30)
   Email           String    @unique @db.NVarChar(150)
-  // ContractType: Permanent | FixedTerm | Internship | Freelance
+  // ContractType: Permanent | FixedTerm | Internship | Freelance | Apprenticeship | WorkStudy
   ContractType    String    @db.NVarChar(20)
   HireDate        DateTime  @db.Date
   TerminationDate DateTime? @db.Date
