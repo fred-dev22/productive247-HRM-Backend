@@ -97,6 +97,11 @@ export class LeaveTransactionService {
     actorId: string,
     leaveRequestId?: string,
     client: TxClient = this.prisma,
+    // 'Manual' uniquement depuis creditManual (ajustement ponctuel via
+    // "Ajuster un solde") — tous les autres appelants (accrual automatique,
+    // consommation/reversement lies a une demande de conge) restent 'System'
+    // par defaut, voir generateAccruals ci-dessous qui s'appuie dessus.
+    source: 'System' | 'Manual' = 'System',
   ) {
     const now = new Date();
     const current = await this.getBalance(employeeId, leaveTypeId, client);
@@ -120,6 +125,7 @@ export class LeaveTransactionService {
         EndDate: now,
         LeaveRequestId: leaveRequestId,
         CreatedBy: actorId,
+        Source: source,
       },
     });
     return { newBalance, appliedMagnitude, wasClamped };
@@ -189,6 +195,7 @@ export class LeaveTransactionService {
               EmployeeId: employee.Id,
               LeaveTypeId: leaveType.Id,
               Type: 'Acquisition',
+              Source: 'System',
               CreatedAt: { gte: monthStart },
               LeaveRequestId: null,
             },
@@ -204,6 +211,7 @@ export class LeaveTransactionService {
               EmployeeId: employee.Id,
               LeaveTypeId: leaveType.Id,
               Type: 'Acquisition',
+              Source: 'System',
               CreatedAt: { gte: yearStart },
               LeaveRequestId: null,
             },
@@ -236,7 +244,7 @@ export class LeaveTransactionService {
       throw new BadRequestException('Le nombre de jours ne peut pas être 0.');
     }
     const type = amount > 0 ? 'Acquisition' : 'Consumption';
-    const result = await this.adjustBalance(employeeId, leaveTypeId, Math.abs(amount), type, actorId, undefined, this.prisma);
+    const result = await this.adjustBalance(employeeId, leaveTypeId, Math.abs(amount), type, actorId, undefined, this.prisma, 'Manual');
 
     const leaveType = await this.prisma.leaveType.findUnique({ where: { Id: leaveTypeId }, select: { Name: true } });
     const verb = amount > 0 ? 'crédité de' : 'débité de';

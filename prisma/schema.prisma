@@ -705,6 +705,13 @@ model LeaveTransaction {
   StartDate      DateTime @db.Date
   EndDate        DateTime @db.Date
   LeaveRequestId String?  @db.UniqueIdentifier
+  // Source: System (accrual automatique ou mouvement lie a une demande de
+  // conge) | Manual (ajustement ponctuel via "Ajuster un solde"). Necessaire
+  // pour que generateAccruals() reconnaisse SES PROPRES credits precedents
+  // sans se laisser tromper par un ajustement manuel identique en apparence
+  // (meme Type='Acquisition', meme LeaveRequestId nul) — sinon un credit
+  // manuel bloquait a tort le prochain credit automatique de la periode.
+  Source         String   @default("System") @db.NVarChar(20)
 
   CreatedBy String   @db.UniqueIdentifier
   CreatedAt DateTime @default(now()) @db.DateTime2
