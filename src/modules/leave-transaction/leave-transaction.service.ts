@@ -156,6 +156,7 @@ export class LeaveTransactionService {
     const now = new Date();
     const currentYear = now.getFullYear();
     const yearStart = new Date(Date.UTC(currentYear, 0, 1));
+    const monthStart = new Date(Date.UTC(currentYear, now.getMonth(), 1));
     const isScoped = !!(opts?.employeeId || opts?.leaveTypeId);
 
     const [employees, leaveTypes] = await Promise.all([
@@ -176,6 +177,23 @@ export class LeaveTransactionService {
       if (leaveType.MonthlyAccrual) {
         const amount = leaveType.DaysPerMonth != null ? Number(leaveType.DaysPerMonth) : daysPerYear / 12;
         for (const employee of employees) {
+          // Un employe ne doit recevoir qu'UN SEUL credit mensuel par
+          // periode (mois calendaire) pour un type donne — sans cette
+          // verification, un double declenchement le meme mois (ex: cron +
+          // clic manuel sur "Générer maintenant", ou creation d'employe le
+          // meme mois qu'un cycle deja passe) le creditait deux fois. Meme
+          // logique de garde que la branche annuelle ci-dessous, juste sur
+          // une fenetre mensuelle plutot qu'annuelle.
+          const alreadyGrantedThisMonth = await this.prisma.leaveTransaction.findFirst({
+            where: {
+              EmployeeId: employee.Id,
+              LeaveTypeId: leaveType.Id,
+              Type: 'Acquisition',
+              CreatedAt: { gte: monthStart },
+              LeaveRequestId: null,
+            },
+          });
+          if (alreadyGrantedThisMonth) continue;
           await this.adjustBalance(employee.Id, leaveType.Id, amount, 'Acquisition', triggeredBy);
           created++;
         }
