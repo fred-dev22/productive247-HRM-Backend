@@ -97,6 +97,11 @@ export class LeaveTransactionService {
     actorId: string,
     leaveRequestId?: string,
     client: TxClient = this.prisma,
+    // 'Manual' uniquement depuis creditManual (ajustement ponctuel via
+    // "Ajuster un solde") — tous les autres appelants (accrual automatique,
+    // consommation/reversement lies a une demande de conge) restent 'System'
+    // par defaut, voir generateAccruals ci-dessous qui s'appuie dessus.
+    source: 'System' | 'Manual' = 'System',
   ) {
     const now = new Date();
     const current = await this.getBalance(employeeId, leaveTypeId, client);
@@ -120,6 +125,7 @@ export class LeaveTransactionService {
         EndDate: now,
         LeaveRequestId: leaveRequestId,
         CreatedBy: actorId,
+        Source: source,
       },
     });
     return { newBalance, appliedMagnitude, wasClamped };
@@ -156,6 +162,7 @@ export class LeaveTransactionService {
     const now = new Date();
     const currentYear = now.getFullYear();
     const yearStart = new Date(Date.UTC(currentYear, 0, 1));
+    const monthStart = new Date(Date.UTC(currentYear, now.getMonth(), 1));
     const isScoped = !!(opts?.employeeId || opts?.leaveTypeId);
 
     const [employees, leaveTypes] = await Promise.all([
@@ -176,6 +183,24 @@ export class LeaveTransactionService {
       if (leaveType.MonthlyAccrual) {
         const amount = leaveType.DaysPerMonth != null ? Number(leaveType.DaysPerMonth) : daysPerYear / 12;
         for (const employee of employees) {
+          // Un employe ne doit recevoir qu'UN SEUL credit mensuel par
+          // periode (mois calendaire) pour un type donne — sans cette
+          // verification, un double declenchement le meme mois (ex: cron +
+          // clic manuel sur "Générer maintenant", ou creation d'employe le
+          // meme mois qu'un cycle deja passe) le creditait deux fois. Meme
+          // logique de garde que la branche annuelle ci-dessous, juste sur
+          // une fenetre mensuelle plutot qu'annuelle.
+          const alreadyGrantedThisMonth = await this.prisma.leaveTransaction.findFirst({
+            where: {
+              EmployeeId: employee.Id,
+              LeaveTypeId: leaveType.Id,
+              Type: 'Acquisition',
+              Source: 'System',
+              CreatedAt: { gte: monthStart },
+              LeaveRequestId: null,
+            },
+          });
+          if (alreadyGrantedThisMonth) continue;
           await this.adjustBalance(employee.Id, leaveType.Id, amount, 'Acquisition', triggeredBy);
           created++;
         }
@@ -186,6 +211,7 @@ export class LeaveTransactionService {
               EmployeeId: employee.Id,
               LeaveTypeId: leaveType.Id,
               Type: 'Acquisition',
+              Source: 'System',
               CreatedAt: { gte: yearStart },
               LeaveRequestId: null,
             },
@@ -218,7 +244,7 @@ export class LeaveTransactionService {
       throw new BadRequestException('Le nombre de jours ne peut pas être 0.');
     }
     const type = amount > 0 ? 'Acquisition' : 'Consumption';
-    const result = await this.adjustBalance(employeeId, leaveTypeId, Math.abs(amount), type, actorId, undefined, this.prisma);
+    const result = await this.adjustBalance(employeeId, leaveTypeId, Math.abs(amount), type, actorId, undefined, this.prisma, 'Manual');
 
     const leaveType = await this.prisma.leaveType.findUnique({ where: { Id: leaveTypeId }, select: { Name: true } });
     const verb = amount > 0 ? 'crédité de' : 'débité de';
