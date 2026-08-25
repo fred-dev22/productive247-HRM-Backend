@@ -68,7 +68,14 @@ export class UserService {
     });
 
     const title = 'Votre compte Productive 247 HRM a été créé';
-    await this.mail.send({
+    // Le retour de mail.send() n'est jamais une exception (voir MailService.send,
+    // qui avale toute erreur pour ne jamais faire echouer une operation dont
+    // l'email n'est qu'un effet de bord) — sans lire ce booleen ici, un envoi
+    // en echec passait totalement inapercu, y compris lors d'un import en
+    // masse ou l'admin RH n'a aucun autre moyen de savoir qu'un employe n'a
+    // pas recu ses identifiants (voir employeeImportConfig.ts onRowCreated,
+    // qui lit desormais ce champ pour avertir sur la ligne concernee).
+    const emailSent = await this.mail.send({
       to: user.Email,
       subject: title,
       html: renderEmailHtml({
@@ -95,7 +102,7 @@ export class UserService {
       }),
     });
 
-    return this.sanitize(user);
+    return { ...this.sanitize(user), EmailSent: emailSent };
   }
 
   async findAll() {
