@@ -1,7 +1,11 @@
 # compiled output
 /dist
+*.zip
 /node_modules
 /build
+
+# Fichiers d'exemple pour tester l'import CSV/Excel en local — pas destines au repo
+/import-samples
 
 # Logs
 logs
