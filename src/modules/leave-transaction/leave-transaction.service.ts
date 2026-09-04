@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '../../../prisma/generated/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
+import { isEligible } from '../../common/utils/eligibility.util';
 
 type TxClient = Prisma.TransactionClient | PrismaService;
 
@@ -19,7 +20,11 @@ export class LeaveTransactionService {
   findAll(employeeId?: string) {
     return this.prisma.leaveTransaction.findMany({
       where: employeeId ? { EmployeeId: employeeId } : undefined,
-      include: { leaveType: { select: { Id: true, Name: true, Code: true, Color: true } } },
+      include: {
+        leaveType: {
+          select: { Id: true, Name: true, Code: true, Color: true },
+        },
+      },
       orderBy: { CreatedAt: 'desc' },
     });
   }
@@ -28,28 +33,51 @@ export class LeaveTransactionService {
   // EmployeeLeaveBalance (cache maintenu a jour par creditBalance/debitBalance
   // ci-dessous), pas recalcule a partir du ledger a chaque appel.
   async getBalances(employeeId: string) {
-    const [balances, leaveTypes] = await Promise.all([
-      this.prisma.employeeLeaveBalance.findMany({ where: { EmployeeId: employeeId } }),
+    const [employee, balances, leaveTypes] = await Promise.all([
+      this.prisma.employee.findUniqueOrThrow({
+        where: { Id: employeeId },
+        select: { Gender: true, IsExpatriate: true, OrganizationUnitId: true },
+      }),
+      this.prisma.employeeLeaveBalance.findMany({
+        where: { EmployeeId: employeeId },
+      }),
       this.prisma.leaveType.findMany({ where: { IsActive: true } }),
     ]);
 
-    return leaveTypes.map((lt) => ({
-      leaveTypeId: lt.Id,
-      leaveTypeName: lt.Name,
-      leaveTypeCode: lt.Code,
-      color: lt.Color,
-      daysPerYear: Number(lt.DaysPerYear),
-      balance: Number(balances.find((b) => b.LeaveTypeId === lt.Id)?.Balance ?? 0),
-    }));
+    return leaveTypes
+      .filter((lt) => isEligible(lt, employee))
+      .map((lt) => ({
+        leaveTypeId: lt.Id,
+        leaveTypeName: lt.Name,
+        leaveTypeCode: lt.Code,
+        color: lt.Color,
+        daysPerYear: Number(lt.DaysPerYear),
+        balance: Number(
+          balances.find((b) => b.LeaveTypeId === lt.Id)?.Balance ?? 0,
+        ),
+      }));
   }
 
   // Vue RH : solde de tous les employes actifs, tous types confondus — pour
-  // le tableau recapitulatif (LeaveBalancesView.vue).
+  // le tableau recapitulatif (LeaveBalancesView.vue). Le filtrage
+  // d'eligibilite (genre/expatrie/entite) est propre a chaque employe, donc
+  // recalcule ligne par ligne plutot que sur une liste de types commune.
   async getAllBalances() {
     const [employees, balances, leaveTypes] = await Promise.all([
       this.prisma.employee.findMany({
-        where: { Status: { in: ['Active', 'OnTrial'] }, IsSystem: false, IsDeleted: false },
-        select: { Id: true, FullName: true, organizationUnit: { select: { Name: true } } },
+        where: {
+          Status: { in: ['Active', 'OnTrial'] },
+          IsSystem: false,
+          IsDeleted: false,
+        },
+        select: {
+          Id: true,
+          FullName: true,
+          Gender: true,
+          IsExpatriate: true,
+          OrganizationUnitId: true,
+          organizationUnit: { select: { Name: true } },
+        },
       }),
       this.prisma.employeeLeaveBalance.findMany(),
       this.prisma.leaveType.findMany({ where: { IsActive: true } }),
@@ -59,16 +87,20 @@ export class LeaveTransactionService {
       employeeId: employee.Id,
       employeeName: employee.FullName,
       entityName: employee.organizationUnit?.Name ?? '',
-      balances: leaveTypes.map((lt) => ({
-        leaveTypeId: lt.Id,
-        leaveTypeName: lt.Name,
-        leaveTypeCode: lt.Code,
-        color: lt.Color,
-        daysPerYear: Number(lt.DaysPerYear),
-        balance: Number(
-          balances.find((b) => b.EmployeeId === employee.Id && b.LeaveTypeId === lt.Id)?.Balance ?? 0,
-        ),
-      })),
+      balances: leaveTypes
+        .filter((lt) => isEligible(lt, employee))
+        .map((lt) => ({
+          leaveTypeId: lt.Id,
+          leaveTypeName: lt.Name,
+          leaveTypeCode: lt.Code,
+          color: lt.Color,
+          daysPerYear: Number(lt.DaysPerYear),
+          balance: Number(
+            balances.find(
+              (b) => b.EmployeeId === employee.Id && b.LeaveTypeId === lt.Id,
+            )?.Balance ?? 0,
+          ),
+        })),
     }));
   }
 
@@ -111,8 +143,17 @@ export class LeaveTransactionService {
     const wasClamped = appliedMagnitude < amount;
 
     await client.employeeLeaveBalance.upsert({
-      where: { EmployeeId_LeaveTypeId: { EmployeeId: employeeId, LeaveTypeId: leaveTypeId } },
-      create: { EmployeeId: employeeId, LeaveTypeId: leaveTypeId, Balance: newBalance },
+      where: {
+        EmployeeId_LeaveTypeId: {
+          EmployeeId: employeeId,
+          LeaveTypeId: leaveTypeId,
+        },
+      },
+      create: {
+        EmployeeId: employeeId,
+        LeaveTypeId: leaveTypeId,
+        Balance: newBalance,
+      },
       update: { Balance: newBalance, ModifiedAt: now },
     });
     await client.leaveTransaction.create({
@@ -131,9 +172,18 @@ export class LeaveTransactionService {
     return { newBalance, appliedMagnitude, wasClamped };
   }
 
-  async getBalance(employeeId: string, leaveTypeId: string, client: TxClient = this.prisma): Promise<number> {
+  async getBalance(
+    employeeId: string,
+    leaveTypeId: string,
+    client: TxClient = this.prisma,
+  ): Promise<number> {
     const row = await client.employeeLeaveBalance.findUnique({
-      where: { EmployeeId_LeaveTypeId: { EmployeeId: employeeId, LeaveTypeId: leaveTypeId } },
+      where: {
+        EmployeeId_LeaveTypeId: {
+          EmployeeId: employeeId,
+          LeaveTypeId: leaveTypeId,
+        },
+      },
     });
     return Number(row?.Balance ?? 0);
   }
@@ -158,7 +208,10 @@ export class LeaveTransactionService {
   // generation complete de l'entreprise a eu lieu ce mois-ci" et ne doit pas
   // etre modifie par un credit partiel, sous peine de faire croire au cron
   // (ou au bouton "Générer maintenant") qu'un cycle complet a deja tourne.
-  async generateAccruals(triggeredBy: string, opts?: { employeeId?: string; leaveTypeId?: string }) {
+  async generateAccruals(
+    triggeredBy: string,
+    opts?: { employeeId?: string; leaveTypeId?: string },
+  ) {
     const now = new Date();
     const currentYear = now.getFullYear();
     const yearStart = new Date(Date.UTC(currentYear, 0, 1));
@@ -167,11 +220,19 @@ export class LeaveTransactionService {
 
     const [employees, leaveTypes] = await Promise.all([
       this.prisma.employee.findMany({
-        where: { Status: { in: ['Active', 'OnTrial'] }, IsSystem: false, IsDeleted: false, ...(opts?.employeeId ? { Id: opts.employeeId } : {}) },
+        where: {
+          Status: { in: ['Active', 'OnTrial'] },
+          IsSystem: false,
+          IsDeleted: false,
+          ...(opts?.employeeId ? { Id: opts.employeeId } : {}),
+        },
         select: { Id: true },
       }),
       this.prisma.leaveType.findMany({
-        where: { IsActive: true, ...(opts?.leaveTypeId ? { Id: opts.leaveTypeId } : {}) },
+        where: {
+          IsActive: true,
+          ...(opts?.leaveTypeId ? { Id: opts.leaveTypeId } : {}),
+        },
       }),
     ]);
 
@@ -181,7 +242,10 @@ export class LeaveTransactionService {
       if (daysPerYear <= 0) continue;
 
       if (leaveType.MonthlyAccrual) {
-        const amount = leaveType.DaysPerMonth != null ? Number(leaveType.DaysPerMonth) : daysPerYear / 12;
+        const amount =
+          leaveType.DaysPerMonth != null
+            ? Number(leaveType.DaysPerMonth)
+            : daysPerYear / 12;
         for (const employee of employees) {
           // Un employe ne doit recevoir qu'UN SEUL credit mensuel par
           // periode (mois calendaire) pour un type donne — sans cette
@@ -190,18 +254,25 @@ export class LeaveTransactionService {
           // meme mois qu'un cycle deja passe) le creditait deux fois. Meme
           // logique de garde que la branche annuelle ci-dessous, juste sur
           // une fenetre mensuelle plutot qu'annuelle.
-          const alreadyGrantedThisMonth = await this.prisma.leaveTransaction.findFirst({
-            where: {
-              EmployeeId: employee.Id,
-              LeaveTypeId: leaveType.Id,
-              Type: 'Acquisition',
-              Source: 'System',
-              CreatedAt: { gte: monthStart },
-              LeaveRequestId: null,
-            },
-          });
+          const alreadyGrantedThisMonth =
+            await this.prisma.leaveTransaction.findFirst({
+              where: {
+                EmployeeId: employee.Id,
+                LeaveTypeId: leaveType.Id,
+                Type: 'Acquisition',
+                Source: 'System',
+                CreatedAt: { gte: monthStart },
+                LeaveRequestId: null,
+              },
+            });
           if (alreadyGrantedThisMonth) continue;
-          await this.adjustBalance(employee.Id, leaveType.Id, amount, 'Acquisition', triggeredBy);
+          await this.adjustBalance(
+            employee.Id,
+            leaveType.Id,
+            amount,
+            'Acquisition',
+            triggeredBy,
+          );
           created++;
         }
       } else {
@@ -217,14 +288,22 @@ export class LeaveTransactionService {
             },
           });
           if (alreadyGranted) continue;
-          await this.adjustBalance(employee.Id, leaveType.Id, daysPerYear, 'Acquisition', triggeredBy);
+          await this.adjustBalance(
+            employee.Id,
+            leaveType.Id,
+            daysPerYear,
+            'Acquisition',
+            triggeredBy,
+          );
           created++;
         }
       }
     }
 
     if (!isScoped) {
-      await this.prisma.companySettings.updateMany({ data: { LastLeaveAccrualRunAt: now } });
+      await this.prisma.companySettings.updateMany({
+        data: { LastLeaveAccrualRunAt: now },
+      });
     }
     this.logger.log(`${SYSTEM_ACTOR_LABEL} : ${created} crédit(s) appliqué(s)`);
     return { created, runAt: now };
@@ -239,14 +318,32 @@ export class LeaveTransactionService {
   // crediter — plafonne a 0 par adjustBalance, jamais de solde negatif en
   // base. reason reste informatif (affiche cote UI) — pas encore persiste,
   // LeaveTransaction n'a pas de colonne dediee.
-  async creditManual(employeeId: string, leaveTypeId: string, amount: number, reason: string | undefined, actorId: string) {
+  async creditManual(
+    employeeId: string,
+    leaveTypeId: string,
+    amount: number,
+    reason: string | undefined,
+    actorId: string,
+  ) {
     if (amount === 0) {
       throw new BadRequestException('Le nombre de jours ne peut pas être 0.');
     }
     const type = amount > 0 ? 'Acquisition' : 'Consumption';
-    const result = await this.adjustBalance(employeeId, leaveTypeId, Math.abs(amount), type, actorId, undefined, this.prisma, 'Manual');
+    const result = await this.adjustBalance(
+      employeeId,
+      leaveTypeId,
+      Math.abs(amount),
+      type,
+      actorId,
+      undefined,
+      this.prisma,
+      'Manual',
+    );
 
-    const leaveType = await this.prisma.leaveType.findUnique({ where: { Id: leaveTypeId }, select: { Name: true } });
+    const leaveType = await this.prisma.leaveType.findUnique({
+      where: { Id: leaveTypeId },
+      select: { Name: true },
+    });
     const verb = amount > 0 ? 'crédité de' : 'débité de';
     await this.notifications.create({
       employeeId,
@@ -256,6 +353,10 @@ export class LeaveTransactionService {
       href: '/employee/absences',
     });
 
-    return { balances: await this.getBalances(employeeId), wasClamped: result.wasClamped, newBalance: result.newBalance };
+    return {
+      balances: await this.getBalances(employeeId),
+      wasClamped: result.wasClamped,
+      newBalance: result.newBalance,
+    };
   }
 }

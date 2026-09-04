@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Min,
   MaxLength,
 } from 'class-validator';
@@ -42,8 +43,10 @@ export class CreateLeaveTypeDto {
   DocumentRequired?: boolean;
 
   @IsOptional()
-  @IsInt({ message: 'Le délai de soumission doit être un nombre entier de jours' })
-  @Min(1, { message: 'Le délai de soumission doit être d\'au moins 1 jour' })
+  @IsInt({
+    message: 'Le délai de soumission doit être un nombre entier de jours',
+  })
+  @Min(1, { message: "Le délai de soumission doit être d'au moins 1 jour" })
   DocumentDeadlineDays?: number;
 
   @IsOptional()
@@ -72,6 +75,21 @@ export class CreateLeaveTypeDto {
   @IsOptional()
   @IsBoolean()
   IsSystem?: boolean;
+
+  // Ciblage d'eligibilite (demande client, 01/09) : absent/non fourni =
+  // s'applique a tout le monde sur ce critere. Meme mecanisme que sur
+  // Holiday (voir common/utils/eligibility.util.ts).
+  @IsOptional()
+  @IsIn(['M', 'F'])
+  AppliesToGender?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  AppliesToExpatriate?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  OrganizationUnitId?: string;
 
   // Ne correspond à aucune colonne LeaveType — déclenche, une fois le type
   // créé, un crédit rétroactif aux employés déjà actifs (mois en cours si

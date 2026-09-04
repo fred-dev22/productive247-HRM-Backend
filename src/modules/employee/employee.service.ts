@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '../../../prisma/generated/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
@@ -46,7 +52,9 @@ export class EmployeeService {
       throw new NotFoundException(`Poste ${positionId} introuvable`);
     }
     if (position._count.employees >= position.Capacity) {
-      throw new BadRequestException(`Le poste « ${position.Title} » n'a plus de siège disponible`);
+      throw new BadRequestException(
+        `Le poste « ${position.Title} » n'a plus de siège disponible`,
+      );
     }
   }
 
@@ -54,19 +62,27 @@ export class EmployeeService {
   // naissance était acceptée sans contrôle.
   private assertHireDateAfterBirthDate(birthDate: Date, hireDate: Date) {
     if (hireDate <= birthDate) {
-      throw new BadRequestException("La date d'embauche doit être postérieure à la date de naissance.");
+      throw new BadRequestException(
+        "La date d'embauche doit être postérieure à la date de naissance.",
+      );
     }
   }
 
   async create(dto: CreateEmployeeDto, createdBy: string) {
     this.assertHireDateAfterBirthDate(dto.BirthDate, dto.HireDate);
-    const employeeNumber = dto.EmployeeNumber?.trim() || (await this.generateEmployeeNumber());
+    const employeeNumber =
+      dto.EmployeeNumber?.trim() || (await this.generateEmployeeNumber());
     const employee = await this.prisma.$transaction(async (tx) => {
       if (dto.PositionId) {
         await this.assertPositionHasCapacity(tx, dto.PositionId);
       }
       return tx.employee.create({
-        data: { ...dto, EmployeeNumber: employeeNumber, FullName: `${dto.FirstName} ${dto.LastName}`, CreatedBy: createdBy },
+        data: {
+          ...dto,
+          EmployeeNumber: employeeNumber,
+          FullName: `${dto.FirstName} ${dto.LastName}`,
+          CreatedBy: createdBy,
+        },
       });
     });
 
@@ -74,9 +90,13 @@ export class EmployeeService {
     // cours pour l'accumulation mensuelle, annee complete pour la dotation
     // annuelle (meme regle que generateAccruals, voir sa doc). Ne bloque pas
     // la creation de l'employe si le credit echoue.
-    await this.leaveTransactionService.generateAccruals(createdBy, { employeeId: employee.Id }).catch((err) => {
-      this.logger.warn(`Crédit initial des congés échoué pour l'employé ${employee.Id} : ${err.message}`);
-    });
+    await this.leaveTransactionService
+      .generateAccruals(createdBy, { employeeId: employee.Id })
+      .catch((err) => {
+        this.logger.warn(
+          `Crédit initial des congés échoué pour l'employé ${employee.Id} : ${err.message}`,
+        );
+      });
 
     this.realtime.broadcastCompany('data:changed', { domain: 'employee' });
     return employee;
@@ -87,14 +107,18 @@ export class EmployeeService {
   // initial des conges, verification de capacite du poste s'appliquent aussi
   // depuis un import) — sequentiel, voir la doc de bulkImport().
   bulkCreate(items: unknown[], createdBy: string) {
-    return bulkImport(items, CreateEmployeeDto, (dto) => this.create(dto, createdBy));
+    return bulkImport(items, CreateEmployeeDto, (dto) =>
+      this.create(dto, createdBy),
+    );
   }
 
   // IsSystem exclut le compte d'amorcage seede ("Admin Galana") — pas un
   // vrai membre du personnel, ne doit jamais apparaitre dans une liste ou
   // un selecteur (voir migration IsSystem + prisma/backfill-employee-is-system.ts).
   findAll() {
-    return this.prisma.employee.findMany({ where: { IsSystem: false, IsDeleted: false } });
+    return this.prisma.employee.findMany({
+      where: { IsSystem: false, IsDeleted: false },
+    });
   }
 
   // Annuaire minimal, ouvert a tout employe authentifie (pas de permission
@@ -123,6 +147,12 @@ export class EmployeeService {
         // l'ajout du week-end au decompte de conges pour un beneficiaire
         // "local" — voir utils/calendar.ts et computeWorkingDays.
         IsExpatriate: true,
+        // Necessaire au filtrage (cote frontend) des types de conge/jours
+        // feries restreints par genre — voir eligibility.util.ts et
+        // AbsenceCreate.vue. Pas une donnee sensible au meme titre que date
+        // de naissance/numero de piece, ne casse pas la justification du
+        // "minimal" de cet endpoint.
+        Gender: true,
       },
       orderBy: { FullName: 'asc' },
     });
@@ -136,11 +166,17 @@ export class EmployeeService {
       return [];
     }
     return this.prisma.employee.findMany({
-      where: { OrganizationUnitId: { in: unitIds }, IsSystem: false, IsDeleted: false },
+      where: {
+        OrganizationUnitId: { in: unitIds },
+        IsSystem: false,
+        IsDeleted: false,
+      },
     });
   }
 
-  private async collectManagedUnitIds(managerEmployeeId: string): Promise<string[]> {
+  private async collectManagedUnitIds(
+    managerEmployeeId: string,
+  ): Promise<string[]> {
     const managedRoots = await this.prisma.organizationUnit.findMany({
       where: { ManagerId: managerEmployeeId },
       select: { Id: true },
@@ -161,7 +197,9 @@ export class EmployeeService {
   }
 
   async findOne(id: string) {
-    const employee = await this.prisma.employee.findUnique({ where: { Id: id } });
+    const employee = await this.prisma.employee.findUnique({
+      where: { Id: id },
+    });
     if (!employee || employee.IsDeleted) {
       throw new NotFoundException(`Employé ${id} introuvable`);
     }
@@ -172,7 +210,11 @@ export class EmployeeService {
   // connecté voit son propre dossier sans permission explicite ; au-delà,
   // il faut EMPLOYE_VOIR_TOUT (tous) ou EMPLOYE_VOIR_EQUIPE (dossier dans
   // son périmètre managérial).
-  async findOneForRequester(id: string, requesterEmployeeId: string, permissions: Set<string>) {
+  async findOneForRequester(
+    id: string,
+    requesterEmployeeId: string,
+    permissions: Set<string>,
+  ) {
     const employee = await this.findOne(id);
 
     if (id === requesterEmployeeId) {
@@ -182,13 +224,16 @@ export class EmployeeService {
       return employee;
     }
     if (permissions.has('EMPLOYE_VOIR_EQUIPE')) {
-      const managedUnitIds = await this.collectManagedUnitIds(requesterEmployeeId);
+      const managedUnitIds =
+        await this.collectManagedUnitIds(requesterEmployeeId);
       if (managedUnitIds.includes(employee.OrganizationUnitId)) {
         return employee;
       }
     }
 
-    throw new ForbiddenException("Vous n'avez pas la permission de consulter ce dossier employé");
+    throw new ForbiddenException(
+      "Vous n'avez pas la permission de consulter ce dossier employé",
+    );
   }
 
   async update(id: string, dto: UpdateEmployeeDto, modifiedBy: string) {
@@ -196,12 +241,17 @@ export class EmployeeService {
     // aussi de changer le Statut vers Inactive (dropdown), pas seulement le
     // bouton Desactiver dedie — les deux portes doivent etre bloquees.
     if (id === modifiedBy && dto.Status === 'Inactive') {
-      throw new BadRequestException('Vous ne pouvez pas désactiver votre propre compte.');
+      throw new BadRequestException(
+        'Vous ne pouvez pas désactiver votre propre compte.',
+      );
     }
     const existing = await this.findOne(id);
     const FirstName = dto.FirstName ?? existing.FirstName;
     const LastName = dto.LastName ?? existing.LastName;
-    this.assertHireDateAfterBirthDate(dto.BirthDate ?? existing.BirthDate, dto.HireDate ?? existing.HireDate);
+    this.assertHireDateAfterBirthDate(
+      dto.BirthDate ?? existing.BirthDate,
+      dto.HireDate ?? existing.HireDate,
+    );
 
     // 'PositionId' in dto distinguishes "field omitted from the PATCH body"
     // (no change intended) from "field explicitly sent" (including null,
@@ -209,7 +259,8 @@ export class EmployeeService {
     const positionFieldSent = 'PositionId' in dto;
     const oldPositionId = existing.PositionId;
     const newPositionId = dto.PositionId;
-    const positionChanged = positionFieldSent && newPositionId !== oldPositionId;
+    const positionChanged =
+      positionFieldSent && newPositionId !== oldPositionId;
 
     return this.prisma.$transaction(async (tx) => {
       if (positionChanged && newPositionId) {
@@ -232,7 +283,9 @@ export class EmployeeService {
   // passées) qui pointent vers cet Id.
   async remove(id: string, requesterId: string) {
     if (id === requesterId) {
-      throw new BadRequestException('Vous ne pouvez pas désactiver votre propre compte.');
+      throw new BadRequestException(
+        'Vous ne pouvez pas désactiver votre propre compte.',
+      );
     }
     await this.findOne(id);
     const employee = await this.prisma.employee.update({
@@ -251,7 +304,9 @@ export class EmployeeService {
   // seul un dev peut repasser IsDeleted a false directement en base.
   async softDelete(id: string, deletedBy: string) {
     if (id === deletedBy) {
-      throw new BadRequestException('Vous ne pouvez pas supprimer votre propre compte.');
+      throw new BadRequestException(
+        'Vous ne pouvez pas supprimer votre propre compte.',
+      );
     }
     await this.findOne(id);
     const employee = await this.prisma.employee.update({
