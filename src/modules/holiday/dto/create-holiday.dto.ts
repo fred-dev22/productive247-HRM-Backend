@@ -30,4 +30,15 @@ export class CreateHolidayDto {
   @IsOptional()
   @IsUUID()
   OrganizationUnitId?: string;
+
+  // Ciblage d'eligibilite (demande client, 01/09) : absent/non fourni =
+  // s'applique a tout le monde sur ce critere. Meme mecanisme que sur
+  // LeaveType (voir common/utils/eligibility.util.ts).
+  @IsOptional()
+  @IsIn(['M', 'F'])
+  AppliesToGender?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  AppliesToExpatriate?: boolean;
 }

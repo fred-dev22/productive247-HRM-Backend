@@ -74,6 +74,7 @@ model OrganizationUnit {
   employees     Employee[]     @relation("EmployeeOrganizationUnit")
   approvalPools ApprovalPool[]
   holidays      Holiday[]
+  leaveTypes    LeaveType[]
 
   @@index([ParentId])
   @@index([ManagerId])
@@ -614,6 +615,10 @@ model Holiday {
   // HolidayType: National | Local
   HolidayType        String   @db.NVarChar(10)
   OrganizationUnitId String?  @db.UniqueIdentifier
+  // Ciblage d'eligibilite (demande client Galana, 01/09), meme mecanisme que
+  // sur LeaveType ci-dessus — nul/absent = s'applique a tout le monde.
+  AppliesToGender     String?  @db.NVarChar(5)
+  AppliesToExpatriate Boolean?
 
   CreatedBy String   @db.UniqueIdentifier
   CreatedAt DateTime @default(now()) @db.DateTime2
@@ -651,6 +656,14 @@ model LeaveType {
   IsActive             Boolean  @default(true)
   IsSystem             Boolean  @default(false)
 
+  // Ciblage d'eligibilite (demande client Galana, 01/09) : nul/absent =
+  // s'applique a tout le monde sur ce critere. Meme mecanisme et memes
+  // colonnes que sur Holiday ci-dessous, voir common/utils/eligibility.util.ts
+  // pour la logique de filtrage partagee entre les deux.
+  AppliesToGender      String?  @db.NVarChar(5)
+  AppliesToExpatriate  Boolean?
+  OrganizationUnitId   String?  @db.UniqueIdentifier
+
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedBy String?   @db.UniqueIdentifier
@@ -658,11 +671,14 @@ model LeaveType {
 
   createdByEmployee  Employee  @relation("LeaveTypeCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee? @relation("LeaveTypeModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  organizationUnit   OrganizationUnit? @relation(fields: [OrganizationUnitId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   leaveTransactions  LeaveTransaction[]
   leaveCancellations LeaveCancellation[]
   leaveRequests      LeaveRequest[]
   employeeBalances   EmployeeLeaveBalance[]
+
+  @@index([OrganizationUnitId])
 }
 
 /// Solde courant de conges par employe et par type — maintenu a jour de

@@ -22,14 +22,20 @@ export class HolidayController {
 
   @Post()
   @RequirePermission('CONFIG_JOURS_FERIES')
-  create(@Body() dto: CreateHolidayDto, @CurrentUser('employeeId') employeeId: string) {
+  create(
+    @Body() dto: CreateHolidayDto,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.create(dto, employeeId);
   }
 
   // Doit rester avant ':id' — sinon Nest matcherait POST /holidays/bulk.
   @Post('bulk')
   @RequirePermission('CONFIG_JOURS_FERIES')
-  bulkCreate(@Body() dto: BulkImportDto, @CurrentUser('employeeId') employeeId: string) {
+  bulkCreate(
+    @Body() dto: BulkImportDto,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.bulkCreate(dto.items, employeeId);
   }
 
@@ -42,8 +48,15 @@ export class HolidayController {
   findForYear(
     @Param('year', ParseIntPipe) year: number,
     @Query('organizationUnitId') organizationUnitId?: string,
+    @Query('gender') gender?: string,
+    @Query('isExpatriate') isExpatriate?: string,
   ) {
-    return this.service.findForYear(year, organizationUnitId);
+    return this.service.findForYear(
+      year,
+      organizationUnitId,
+      gender,
+      isExpatriate === undefined ? undefined : isExpatriate === 'true',
+    );
   }
 
   @Get(':id')

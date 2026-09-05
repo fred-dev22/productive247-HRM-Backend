@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "C:\\Users\\fred\\Desktop\\AfrikEdge\\productive247-hrm"],
       "port": 5173
+    },
+    {
+      "name": "productive247-hrm-backend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start:dev"],
+      "port": 3000
     }
   ]
 }

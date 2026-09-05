@@ -5,6 +5,20 @@ import { AppModule } from './app.module';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
 
 async function bootstrap() {
+  // CORS_ORIGIN sert aussi de base aux liens generes dans les emails (voir
+  // frontendOrigin() dans email-templates.ts) : sans lui, ces liens pointent
+  // silencieusement vers localhost, invisibles tant que personne ne clique
+  // dessus depuis un serveur distant. Avertissement bien visible au demarrage
+  // plutot qu'un defaut silencieux, pour reperer l'oubli tout de suite au
+  // deploiement au lieu d'attendre une plainte client.
+  if (!process.env.CORS_ORIGIN) {
+    console.warn(
+      "[ATTENTION] CORS_ORIGIN n'est pas defini. L'API n'acceptera que http://localhost:5173, " +
+        'et les liens generes dans les emails (validation de demande, creation de compte...) ' +
+        "pointeront aussi vers localhost au lieu de l'adresse reelle du serveur. " +
+        "Definir CORS_ORIGIN dans le fichier .env avec l'adresse publique du frontend (voir .env.example).",
+    );
+  }
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
   app.enableCors({
