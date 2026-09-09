@@ -66,7 +66,14 @@ export class CreateEmployeeDto {
   @MaxLength(150)
   Email: string;
 
-  @IsIn(['Permanent', 'FixedTerm', 'Internship', 'Freelance', 'Apprenticeship', 'WorkStudy'])
+  @IsIn([
+    'Permanent',
+    'FixedTerm',
+    'Internship',
+    'Freelance',
+    'Apprenticeship',
+    'WorkStudy',
+  ])
   ContractType: string;
 
   @Type(() => Date)
@@ -96,4 +103,10 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsBoolean()
   IsExpatriate?: boolean;
+
+  // Validateur direct (retour client, 08/09) — voir Employee.DirectValidatorId
+  // (schema.prisma). Absent/null = pool par entite (comportement par defaut).
+  @IsOptional()
+  @IsUUID()
+  DirectValidatorId?: string;
 }

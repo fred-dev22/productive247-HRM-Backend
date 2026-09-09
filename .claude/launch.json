@@ -12,6 +12,18 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "start:dev"],
       "port": 3000
+    },
+    {
+      "name": "hv-hrm-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "C:\\Users\\fred\\Desktop\\AfrikEdge\\hv-hrm"],
+      "port": 5173
+    },
+    {
+      "name": "hv-hrm-backend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start:dev", "--prefix", "C:\\Users\\fred\\Desktop\\AfrikEdge\\hv-hrm-backend"],
+      "port": 3000
     }
   ]
 }
