@@ -10,6 +10,7 @@ import {
 import { OrganizationUnitService } from './organization-unit.service';
 import { CreateOrganizationUnitDto } from './dto/create-organization-unit.dto';
 import { UpdateOrganizationUnitDto } from './dto/update-organization-unit.dto';
+import { SetLeaveApprovalModeDto } from './dto/set-leave-approval-mode.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { BulkImportDto } from '../../common/dto/bulk-import.dto';
@@ -20,14 +21,20 @@ export class OrganizationUnitController {
 
   @Post()
   @RequirePermission('ENTITE_CREER')
-  create(@Body() dto: CreateOrganizationUnitDto, @CurrentUser('employeeId') employeeId: string) {
+  create(
+    @Body() dto: CreateOrganizationUnitDto,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.create(dto, employeeId);
   }
 
   // Doit rester avant ':id' — sinon Nest matcherait POST /organization-units/bulk.
   @Post('bulk')
   @RequirePermission('ENTITE_CREER')
-  bulkCreate(@Body() dto: BulkImportDto, @CurrentUser('employeeId') employeeId: string) {
+  bulkCreate(
+    @Body() dto: BulkImportDto,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.bulkCreate(dto.items, employeeId);
   }
 
@@ -67,28 +74,53 @@ export class OrganizationUnitController {
     return this.service.update(id, dto, employeeId);
   }
 
+  // Voir SetLeaveApprovalModeDto — meme permission que le PATCH generique
+  // ci-dessus (c'est bien un champ de l'entite), endpoint separe pour ne pas
+  // declencher le passage en PendingApproval.
+  @Patch(':id/leave-approval-mode')
+  @RequirePermission('ENTITE_MODIFIER')
+  setLeaveApprovalMode(
+    @Param('id') id: string,
+    @Body() dto: SetLeaveApprovalModeDto,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
+    return this.service.setLeaveApprovalMode(id, dto, employeeId);
+  }
+
   @Post(':id/submit')
   @RequirePermission('ENTITE_SOUMETTRE')
-  submit(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
+  submit(
+    @Param('id') id: string,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.submit(id, employeeId);
   }
 
   @Post(':id/approve')
   @RequirePermission('ENTITE_APPROUVER')
-  approve(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
+  approve(
+    @Param('id') id: string,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.approve(id, employeeId);
   }
 
   @Post(':id/reject')
   @RequirePermission('ENTITE_APPROUVER')
-  reject(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
+  reject(
+    @Param('id') id: string,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.reject(id, employeeId);
   }
 
   // Suppression definitive (Lot I) — voir doc de service.softDelete().
   @Delete(':id/permanent')
   @RequirePermission('ENTITE_SUPPRIMER')
-  softDelete(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
+  softDelete(
+    @Param('id') id: string,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.softDelete(id, employeeId);
   }
 }

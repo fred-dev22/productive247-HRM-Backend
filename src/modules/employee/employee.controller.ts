@@ -10,6 +10,7 @@ import {
 import { EmployeeService } from './employee.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { AssignDirectValidatorDto } from './dto/assign-direct-validator.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { CurrentPermissions } from '../../common/decorators/current-permissions.decorator';
@@ -21,15 +22,39 @@ export class EmployeeController {
 
   @Post()
   @RequirePermission('EMPLOYE_CREER')
-  create(@Body() dto: CreateEmployeeDto, @CurrentUser('employeeId') employeeId: string) {
+  create(
+    @Body() dto: CreateEmployeeDto,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.create(dto, employeeId);
   }
 
   // Doit rester avant ':id' — sinon Nest matcherait POST /employees/bulk.
   @Post('bulk')
   @RequirePermission('EMPLOYE_CREER')
-  bulkCreate(@Body() dto: BulkImportDto, @CurrentUser('employeeId') employeeId: string) {
+  bulkCreate(
+    @Body() dto: BulkImportDto,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.bulkCreate(dto.items, employeeId);
+  }
+
+  // Assignation du validateur direct — utilise par l'import CSV en masse
+  // (Configuration, voir AssignDirectValidatorDto). Delegue a update() (meme
+  // permission, meme logique/audit) plutot qu'une methode dediee — un DTO
+  // separe existe seulement parce que le wizard d'import generique appelle
+  // toujours un POST une fois par ligne, jamais un PATCH parametre par id.
+  @Post('assign-direct-validator')
+  @RequirePermission('EMPLOYE_MODIFIER')
+  assignDirectValidator(
+    @Body() dto: AssignDirectValidatorDto,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
+    return this.service.update(
+      dto.EmployeeId,
+      { DirectValidatorId: dto.DirectValidatorId },
+      employeeId,
+    );
   }
 
   @Get()
@@ -65,7 +90,11 @@ export class EmployeeController {
     @CurrentUser('employeeId') requesterEmployeeId: string,
     @CurrentPermissions() permissions: Set<string>,
   ) {
-    return this.service.findOneForRequester(id, requesterEmployeeId, permissions);
+    return this.service.findOneForRequester(
+      id,
+      requesterEmployeeId,
+      permissions,
+    );
   }
 
   @Patch(':id')
@@ -80,7 +109,10 @@ export class EmployeeController {
 
   @Delete(':id')
   @RequirePermission('EMPLOYE_DESACTIVER')
-  remove(@Param('id') id: string, @CurrentUser('employeeId') requesterId: string) {
+  remove(
+    @Param('id') id: string,
+    @CurrentUser('employeeId') requesterId: string,
+  ) {
     return this.service.remove(id, requesterId);
   }
 
@@ -90,7 +122,10 @@ export class EmployeeController {
   // l'existant.
   @Delete(':id/permanent')
   @RequirePermission('EMPLOYE_SUPPRIMER')
-  softDelete(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
+  softDelete(
+    @Param('id') id: string,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
     return this.service.softDelete(id, employeeId);
   }
 }
