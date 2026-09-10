@@ -28,6 +28,7 @@ import { MailModule } from './modules/mail/mail.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { AttachmentModule } from './modules/attachment/attachment.module';
 import { PublicApprovalModule } from './modules/public-approval/public-approval.module';
+import { RecruitmentModule } from './modules/recruitment/recruitment.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { PublicApprovalModule } from './modules/public-approval/public-approval.
     NotificationModule,
     AttachmentModule,
     PublicApprovalModule,
+    RecruitmentModule,
   ],
   controllers: [AppController],
   providers: [AppService],

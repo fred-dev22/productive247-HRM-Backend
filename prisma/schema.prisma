@@ -31,23 +31,23 @@ datasource db {
 /// Unite organisationnelle de l'entreprise : Direction, Departement ou Service.
 /// Auto-referencee via ParentId pour modeliser la hierarchie.
 model OrganizationUnit {
-  Id              String  @id @default(uuid()) @db.UniqueIdentifier
-  Code            String  @unique @db.NVarChar(20)
-  Name            String  @db.NVarChar(150)
+  Id                String  @id @default(uuid()) @db.UniqueIdentifier
+  Code              String  @unique @db.NVarChar(20)
+  Name              String  @db.NVarChar(150)
   // Type: Direction | Department | Service
-  Type            String  @db.NVarChar(20)
+  Type              String  @db.NVarChar(20)
   // Absent du modele PDF — identifiant legal/fiscal local (RCS, NIF...),
   // ajoute a la demande cote UI (ecrans de creation/edition d'entite).
-  LegalIdentifier String? @db.NVarChar(50)
-  ParentId        String? @db.UniqueIdentifier
+  LegalIdentifier   String? @db.NVarChar(50)
+  ParentId          String? @db.UniqueIdentifier
   // Responsable designe de cette unite. Nullable en pratique : une unite peut
   // exister avant qu'un employe lui soit rattache (bootstrap / transition).
-  ManagerId       String? @db.UniqueIdentifier
-  Address         String? @db.NVarChar(255)
-  Phone           String? @db.NVarChar(30)
-  Email           String? @db.NVarChar(150)
+  ManagerId         String? @db.UniqueIdentifier
+  Address           String? @db.NVarChar(255)
+  Phone             String? @db.NVarChar(30)
+  Email             String? @db.NVarChar(150)
   // Status: Draft | PendingApproval | Active | Inactive
-  Status          String  @db.NVarChar(20)
+  Status            String  @db.NVarChar(20)
   // LeaveApprovalMode: Pool | DirectValidator (retour client du 09/09) — les
   // deux mecanismes de validation des conges de cette entite (pool par
   // entite vs validateur direct par employe, voir Employee.DirectValidatorId)
@@ -57,7 +57,7 @@ model OrganizationUnit {
   // (PATCH /organization-units/:id/leave-approval-mode), pas le PATCH
   // generique — evite de repasser l'entite en PendingApproval pour un simple
   // changement de regle de validation (voir update() dans le service).
-  LeaveApprovalMode String @default("Pool") @db.NVarChar(20)
+  LeaveApprovalMode String  @default("Pool") @db.NVarChar(20)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -231,12 +231,12 @@ model Employee {
   DeletedBy  String?   @db.UniqueIdentifier
   DeletedAt  DateTime? @db.DateTime2
 
-  position         Position?         @relation(fields: [PositionId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  organizationUnit OrganizationUnit  @relation("EmployeeOrganizationUnit", fields: [OrganizationUnitId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  directValidator  Employee?         @relation("EmployeeDirectValidator", fields: [DirectValidatorId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  directValidatorFor Employee[]      @relation("EmployeeDirectValidator")
-  user             User?             @relation(fields: [UserId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  employeeCategory EmployeeCategory? @relation(fields: [EmployeeCategoryId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  position           Position?         @relation(fields: [PositionId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  organizationUnit   OrganizationUnit  @relation("EmployeeOrganizationUnit", fields: [OrganizationUnitId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  directValidator    Employee?         @relation("EmployeeDirectValidator", fields: [DirectValidatorId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  directValidatorFor Employee[]        @relation("EmployeeDirectValidator")
+  user               User?             @relation(fields: [UserId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  employeeCategory   EmployeeCategory? @relation(fields: [EmployeeCategoryId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   createdByEmployee  Employee?  @relation("EmployeeCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   employeesCreated   Employee[] @relation("EmployeeCreatedBy")
@@ -261,8 +261,8 @@ model Employee {
   approvalPoolInterimMemberships ApprovalPoolMember[] @relation("ApprovalPoolMemberInterim")
   approvalPoolMembersCreated     ApprovalPoolMember[] @relation("ApprovalPoolMemberCreatedBy")
 
-  approvalDecisionsValidated ApprovalDecision[] @relation("ApprovalDecisionValidatedBy")
-  approvalDecisionsCreated   ApprovalDecision[] @relation("ApprovalDecisionCreatedBy")
+  approvalDecisionsValidated         ApprovalDecision[] @relation("ApprovalDecisionValidatedBy")
+  approvalDecisionsCreated           ApprovalDecision[] @relation("ApprovalDecisionCreatedBy")
   approvalDecisionsAsDirectValidator ApprovalDecision[] @relation("ApprovalDecisionDirectValidator")
 
   companySettingsModified CompanySettings[] @relation("CompanySettingsModifiedBy")
@@ -320,6 +320,28 @@ model Employee {
   categoryPermissionsGranted CategoryPermission[] @relation("CategoryPermissionCreatedBy")
 
   notifications Notification[]
+
+  // Module Recrutement (branche dev-recrutement-module)
+  hiringRequestsCreated              HiringRequest[]               @relation("HiringRequestCreatedBy")
+  hiringRequestsModified             HiringRequest[]               @relation("HiringRequestModifiedBy")
+  jobOffersCreated                   JobOffer[]                    @relation("JobOfferCreatedBy")
+  jobOffersModified                  JobOffer[]                    @relation("JobOfferModifiedBy")
+  interviewEvalTemplatesCreated      InterviewEvaluationTemplate[] @relation("InterviewEvalTemplateCreatedBy")
+  interviewEvalTemplatesModified     InterviewEvaluationTemplate[] @relation("InterviewEvalTemplateModifiedBy")
+  recruitmentApplicationsAsCandidate RecruitmentApplication[]      @relation("RecruitmentApplicationCandidate")
+  recruitmentApplicationsCreated     RecruitmentApplication[]      @relation("RecruitmentApplicationCreatedBy")
+  recruitmentApplicationsModified    RecruitmentApplication[]      @relation("RecruitmentApplicationModifiedBy")
+  interviewsCreated                  Interview[]                   @relation("InterviewCreatedBy")
+  interviewsModified                 Interview[]                   @relation("InterviewModifiedBy")
+  interviewParticipations            InterviewParticipant[]        @relation("InterviewParticipantEmployee")
+  recruitmentContractsCreated        RecruitmentContract[]         @relation("RecruitmentContractCreatedBy")
+  recruitmentContractsModified       RecruitmentContract[]         @relation("RecruitmentContractModifiedBy")
+  contractTemplatesCreated           ContractTemplate[]            @relation("ContractTemplateCreatedBy")
+  contractTemplatesModified          ContractTemplate[]            @relation("ContractTemplateModifiedBy")
+  trialEmployeesCreated              TrialEmployee[]               @relation("TrialEmployeeCreatedBy")
+  trialEmployeesModified             TrialEmployee[]               @relation("TrialEmployeeModifiedBy")
+  talentPoolEntriesCreated           TalentPoolEntry[]             @relation("TalentPoolEntryCreatedBy")
+  talentPoolEntriesModified          TalentPoolEntry[]             @relation("TalentPoolEntryModifiedBy")
 
   @@index([PositionId])
   @@index([OrganizationUnitId])
@@ -506,24 +528,24 @@ model ApprovalDecision {
   Id String @id @default(uuid()) @db.UniqueIdentifier
 
   // EntityType: LeaveRequest | MissionOrder | ExpenseReport
-  EntityType            String    @db.NVarChar(30)
+  EntityType                String    @db.NVarChar(30)
   // ID de la demande concernee (LeaveRequest, MissionOrder ou ExpenseReport
   // selon EntityType) — reference polymorphique, pas de FK Prisma.
-  EntityId              String    @db.UniqueIdentifier
+  EntityId                  String    @db.UniqueIdentifier
   // Nullable depuis l'ajout du validateur direct (Employee.DirectValidatorId,
   // retour client du 08/09) : une decision vient SOIT d'un niveau de pool
   // (ApprovalPoolMemberId rempli), SOIT d'un validateur direct
   // (DirectValidatorEmployeeId rempli ci-dessous) — jamais les deux, jamais
   // aucun des deux. Voir LeaveRequestService.routeToApproval/
   // routeToDirectValidator/approve/assertIsCurrentApprover.
-  ApprovalPoolMemberId  String?   @db.UniqueIdentifier
-  DirectValidatorEmployeeId String? @db.UniqueIdentifier
-  ValidatedByEmployeeId String    @db.UniqueIdentifier
-  StepOrder             Int
+  ApprovalPoolMemberId      String?   @db.UniqueIdentifier
+  DirectValidatorEmployeeId String?   @db.UniqueIdentifier
+  ValidatedByEmployeeId     String    @db.UniqueIdentifier
+  StepOrder                 Int
   // Decision: Pending | Approved | Rejected | Returned
-  Decision              String    @db.NVarChar(20)
-  Comment               String?   @db.NVarChar(500)
-  DecidedAt             DateTime? @db.DateTime2
+  Decision                  String    @db.NVarChar(20)
+  Comment                   String?   @db.NVarChar(500)
+  DecidedAt                 DateTime? @db.DateTime2
   // Jeton public pour la validation par email (clique-pour-approuver sans
   // connexion) — genere a la creation de la decision, verifie cote
   // PublicApprovalService (findFirst, pas findUnique : pas de contrainte
@@ -533,13 +555,13 @@ model ApprovalDecision {
   // collision reelle negligeable, l'index suffit pour la performance du
   // lookup). Invalide de facto des que Decision != Pending (voir la
   // verification "Decision: Pending" dans le lookup par token).
-  Token                 String?   @db.NVarChar(64)
+  Token                     String?   @db.NVarChar(64)
 
   CreatedBy String   @db.UniqueIdentifier
   CreatedAt DateTime @default(now()) @db.DateTime2
 
-  approvalPoolMember ApprovalPoolMember? @relation(fields: [ApprovalPoolMemberId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  directValidatorEmployee Employee? @relation("ApprovalDecisionDirectValidator", fields: [DirectValidatorEmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  approvalPoolMember      ApprovalPoolMember? @relation(fields: [ApprovalPoolMemberId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  directValidatorEmployee Employee?           @relation("ApprovalDecisionDirectValidator", fields: [DirectValidatorEmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   validatedByEmployee Employee @relation("ApprovalDecisionValidatedBy", fields: [ValidatedByEmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   createdByEmployee   Employee @relation("ApprovalDecisionCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
@@ -641,13 +663,13 @@ model CalendarWorkDay {
 /// Calendrier des jours feries utilise par le backend pour exclure ces jours
 /// du calcul de duree des absences.
 model Holiday {
-  Id                 String   @id @default(uuid()) @db.UniqueIdentifier
-  Name               String   @db.NVarChar(150)
-  Date               DateTime @db.Date
-  IsRecurring        Boolean  @default(false)
+  Id                  String   @id @default(uuid()) @db.UniqueIdentifier
+  Name                String   @db.NVarChar(150)
+  Date                DateTime @db.Date
+  IsRecurring         Boolean  @default(false)
   // HolidayType: National | Local
-  HolidayType        String   @db.NVarChar(10)
-  OrganizationUnitId String?  @db.UniqueIdentifier
+  HolidayType         String   @db.NVarChar(10)
+  OrganizationUnitId  String?  @db.UniqueIdentifier
   // Ciblage d'eligibilite (demande client Galana, 01/09), meme mecanisme que
   // sur LeaveType ci-dessus — nul/absent = s'applique a tout le monde.
   AppliesToGender     String?  @db.NVarChar(5)
@@ -693,9 +715,9 @@ model LeaveType {
   // s'applique a tout le monde sur ce critere. Meme mecanisme et memes
   // colonnes que sur Holiday ci-dessous, voir common/utils/eligibility.util.ts
   // pour la logique de filtrage partagee entre les deux.
-  AppliesToGender      String?  @db.NVarChar(5)
-  AppliesToExpatriate  Boolean?
-  OrganizationUnitId   String?  @db.UniqueIdentifier
+  AppliesToGender     String?  @db.NVarChar(5)
+  AppliesToExpatriate Boolean?
+  OrganizationUnitId  String?  @db.UniqueIdentifier
 
   // Decompte calendaire (retour client, 08/09) : false (par defaut) = jours
   // ouvres, le comportement actuel (weekends/feries exclus, regle du
@@ -705,15 +727,15 @@ model LeaveType {
   // et non des jours travailles. Voir leave-request.service.ts
   // computeWorkingDays (backend, source de verite) et utils/calendar.ts
   // chargedWorkingDays (frontend, apercu) qui doivent rester en miroir.
-  CountCalendarDays    Boolean  @default(false)
+  CountCalendarDays Boolean @default(false)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
   ModifiedBy String?   @db.UniqueIdentifier
   ModifiedAt DateTime? @db.DateTime2
 
-  createdByEmployee  Employee  @relation("LeaveTypeCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
-  modifiedByEmployee Employee? @relation("LeaveTypeModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdByEmployee  Employee          @relation("LeaveTypeCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee?         @relation("LeaveTypeModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   organizationUnit   OrganizationUnit? @relation(fields: [OrganizationUnitId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   leaveTransactions  LeaveTransaction[]
@@ -1183,4 +1205,439 @@ model Notification {
   employee Employee @relation(fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([EmployeeId])
+}
+
+// =========================================================================
+// MODULE RECRUTEMENT (branche dev-recrutement-module)
+//
+// Aucun circuit de validation (decision client du 05/09) : une offre est
+// enregistree en brouillon puis publiee une seule fois — "c'est le RH et
+// c'est entre eux". Les statuts restent volontairement simples, pas de
+// PendingApproval/Approved comme les autres domaines. L'acces au module est
+// porte par une seule permission, RECRUTEMENT_ACCES (voir prisma/seed-data.ts) :
+// qui voit le menu peut tout faire dedans. Deux permissions annexes cote
+// espace Administration pour l'expression de besoin : RECRUTEMENT_BESOIN_VOIR
+// et RECRUTEMENT_BESOIN_EXPRIMER.
+//
+// L'entite d'appartenance (EntityName) est un texte libre, pas une FK vers
+// OrganizationUnit : le module cible aussi des candidats/postes externes et
+// les ecrans n'affichent qu'un libelle (voir stores/recruitment cote front).
+// =========================================================================
+
+/// Expression de besoin en recrutement — un manager / departement demande la
+/// creation d'un poste. Point d'entree du module, expose cote espace
+/// Administration. Pas de validation : Draft -> Open (exprime, visible du RH)
+/// -> Closed | Cancelled.
+model HiringRequest {
+  Id            String @id @default(uuid()) @db.UniqueIdentifier
+  ReferenceCode String @unique @db.NVarChar(20)
+  PositionTitle String @db.NVarChar(150)
+  EntityName    String @db.NVarChar(150)
+  Headcount     Int    @default(1)
+  Profile       String @db.NVarChar(Max)
+  // Status: Draft | Open | Closed | Cancelled
+  Status        String @default("Draft") @db.NVarChar(20)
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
+
+  createdByEmployee  Employee  @relation("HiringRequestCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee? @relation("HiringRequestModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  jobOffers JobOffer[]
+
+  @@index([Status])
+  @@index([CreatedBy])
+}
+
+/// Offre d'emploi. Un stage est une offre comme une autre (ContractType =
+/// 'Stage'). Draft -> Published (une seule fois, PublishedAt fige) -> Closed.
+/// PublicToken : jeton opaque du lien partageable du portail carriere.
+model JobOffer {
+  Id                            String    @id @default(uuid()) @db.UniqueIdentifier
+  ReferenceCode                 String    @unique @db.NVarChar(20)
+  HiringRequestId               String?   @db.UniqueIdentifier
+  Title                         String    @db.NVarChar(150)
+  EntityName                    String    @db.NVarChar(150)
+  ContractType                  String    @db.NVarChar(30)
+  Location                      String    @db.NVarChar(150)
+  Description                   String    @db.NVarChar(Max)
+  // Status: Draft | Published | Closed
+  Status                        String    @default("Draft") @db.NVarChar(20)
+  PublishedAt                   DateTime? @db.DateTime2
+  Views                         Int       @default(0)
+  // Cout total de la campagne (annonces, cabinet...) saisi a la cloture, en
+  // MGA — sert au "cout par recrutement" du pipeline.
+  RecruitmentCost               Decimal?  @db.Decimal(18, 2)
+  // Grille d'evaluation d'entretien rattachee (US15) — optionnelle.
+  InterviewEvaluationTemplateId String?   @db.UniqueIdentifier
+  PublicToken                   String    @db.NVarChar(64)
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
+
+  hiringRequest      HiringRequest?               @relation(fields: [HiringRequestId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  evaluationTemplate InterviewEvaluationTemplate? @relation(fields: [InterviewEvaluationTemplateId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdByEmployee  Employee                     @relation("JobOfferCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee?                    @relation("JobOfferModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  applications RecruitmentApplication[]
+
+  @@index([HiringRequestId])
+  @@index([InterviewEvaluationTemplateId])
+  @@index([Status])
+  @@index([PublicToken])
+  @@index([CreatedBy])
+}
+
+/// Grille d'evaluation standardisee pour les entretiens (US15) — un jeu fixe
+/// de criteres, chacun note /5. Cree et gere par le RH, rattachable a une
+/// offre. Meme esprit que ContractTemplate mais pour l'entretien.
+model InterviewEvaluationTemplate {
+  Id   String @id @default(uuid()) @db.UniqueIdentifier
+  Name String @db.NVarChar(150)
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
+
+  createdByEmployee  Employee  @relation("InterviewEvalTemplateCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee? @relation("InterviewEvalTemplateModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  criteria  InterviewEvaluationCriterion[]
+  jobOffers JobOffer[]
+
+  @@index([CreatedBy])
+}
+
+/// Critere d'une grille d'evaluation d'entretien. Ordonne par Position.
+model InterviewEvaluationCriterion {
+  Id         String @id @default(uuid()) @db.UniqueIdentifier
+  TemplateId String @db.UniqueIdentifier
+  Label      String @db.NVarChar(200)
+  Position   Int    @default(0)
+
+  template InterviewEvaluationTemplate @relation(fields: [TemplateId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([TemplateId])
+}
+
+/// Candidature. Source: Offer (candidat externe via une offre) | Spontaneous
+/// (hors offre) | Internal (mobilite : un employe deja dans le systeme, voir
+/// EmployeeId). Statut libre pilote a la main par le RH.
+model RecruitmentApplication {
+  Id             String   @id @default(uuid()) @db.UniqueIdentifier
+  ReferenceCode  String   @unique @db.NVarChar(20)
+  JobOfferId     String?  @db.UniqueIdentifier
+  JobOfferTitle  String?  @db.NVarChar(150)
+  CandidateName  String   @db.NVarChar(150)
+  CandidateEmail String   @db.NVarChar(150)
+  CandidatePhone String   @db.NVarChar(30)
+  // Source: Offer | Spontaneous | Internal
+  Source         String   @db.NVarChar(20)
+  CvFileName     String?  @db.NVarChar(255)
+  // Renseigne uniquement pour une candidature interne (Source='Internal') :
+  // le vrai compte employe qui postule.
+  EmployeeId     String?  @db.UniqueIdentifier
+  // Status: New | InReview | InterviewScheduled | Retained | Rejected
+  Status         String   @default("New") @db.NVarChar(20)
+  AppliedAt      DateTime @db.DateTime2
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
+
+  jobOffer           JobOffer? @relation(fields: [JobOfferId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  employee           Employee? @relation("RecruitmentApplicationCandidate", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdByEmployee  Employee  @relation("RecruitmentApplicationCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee? @relation("RecruitmentApplicationModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  notes      ApplicationNote[]
+  interviews Interview[]
+  contract   RecruitmentContract?
+
+  @@index([JobOfferId])
+  @@index([EmployeeId])
+  @@index([Status])
+  @@index([CreatedBy])
+}
+
+/// Note / observation horodatee sur une candidature.
+model ApplicationNote {
+  Id            String   @id @default(uuid()) @db.UniqueIdentifier
+  ApplicationId String   @db.UniqueIdentifier
+  AuthorName    String   @db.NVarChar(150)
+  Text          String   @db.NVarChar(Max)
+  CreatedAt     DateTime @default(now()) @db.DateTime2
+
+  application RecruitmentApplication @relation(fields: [ApplicationId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([ApplicationId])
+}
+
+/// Entretien rattache a une candidature. Scheduled -> Done (evalue) |
+/// Cancelled. A la planification, des invitations calendrier (.ics) sont
+/// envoyees automatiquement aux participants et au candidat (US13-14).
+model Interview {
+  Id            String   @id @default(uuid()) @db.UniqueIdentifier
+  ReferenceCode String   @unique @db.NVarChar(20)
+  ApplicationId String   @db.UniqueIdentifier
+  ScheduledAt   DateTime @db.DateTime2
+  // Mode: InPerson | VideoCall
+  Mode          String   @db.NVarChar(20)
+  // L'un ou l'autre selon Mode, jamais les deux.
+  Location      String?  @db.NVarChar(255)
+  MeetingLink   String?  @db.NVarChar(500)
+  // Status: Scheduled | Done | Cancelled
+  Status        String   @default("Scheduled") @db.NVarChar(20)
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
+
+  application        RecruitmentApplication @relation(fields: [ApplicationId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdByEmployee  Employee               @relation("InterviewCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee?              @relation("InterviewModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  participants InterviewParticipant[]
+  evaluation   InterviewEvaluation?
+
+  @@index([ApplicationId])
+  @@index([Status])
+}
+
+/// Participant a un entretien. EmployeeId renseigne = choisi via l'annuaire
+/// (permet de retrouver son email pour l'invitation calendrier) ; sinon
+/// Name/Email saisis a la main.
+model InterviewParticipant {
+  Id          String  @id @default(uuid()) @db.UniqueIdentifier
+  InterviewId String  @db.UniqueIdentifier
+  EmployeeId  String? @db.UniqueIdentifier
+  Name        String  @db.NVarChar(150)
+  Email       String? @db.NVarChar(150)
+
+  interview Interview @relation(fields: [InterviewId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  employee  Employee? @relation("InterviewParticipantEmployee", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([InterviewId])
+  @@index([EmployeeId])
+}
+
+/// Evaluation d'un entretien (1 par entretien). Score global = moyenne des
+/// criteres si une grille a ete utilisee, saisi directement sinon.
+model InterviewEvaluation {
+  Id              String   @id @default(uuid()) @db.UniqueIdentifier
+  InterviewId     String   @unique @db.UniqueIdentifier
+  Score           Decimal  @db.Decimal(4, 2)
+  Comment         String   @db.NVarChar(Max)
+  InterviewerName String   @db.NVarChar(150)
+  TemplateName    String?  @db.NVarChar(150)
+  CreatedAt       DateTime @default(now()) @db.DateTime2
+
+  interview Interview @relation(fields: [InterviewId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  criteriaScores InterviewCriterionScore[]
+}
+
+/// Note d'un critere de grille pour une evaluation d'entretien donnee.
+model InterviewCriterionScore {
+  Id           String @id @default(uuid()) @db.UniqueIdentifier
+  EvaluationId String @db.UniqueIdentifier
+  Label        String @db.NVarChar(200)
+  Score        Int
+
+  evaluation InterviewEvaluation @relation(fields: [EvaluationId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([EvaluationId])
+}
+
+/// Proposition d'embauche post-entretien (workflow RH : proposition ->
+/// negociation -> confirmation). Aucun circuit de validation interne : le RH
+/// mene, le recruteur est notifie de l'issue. Draft -> Sent -> Negotiating*
+/// -> Accepted (cree une periode d'essai) | Refused | Cancelled.
+model RecruitmentContract {
+  Id                     String    @id @default(uuid()) @db.UniqueIdentifier
+  ReferenceCode          String    @unique @db.NVarChar(20)
+  ApplicationId          String    @unique @db.UniqueIdentifier
+  TemplateId             String?   @db.UniqueIdentifier
+  TemplateName           String?   @db.NVarChar(150)
+  CandidateName          String    @db.NVarChar(150)
+  JobTitle               String    @db.NVarChar(150)
+  EntityName             String    @db.NVarChar(150)
+  StartDate              DateTime  @db.Date
+  EndDate                DateTime? @db.Date
+  Salary                 Decimal   @db.Decimal(18, 2)
+  // Status: Draft | Sent | Negotiating | Accepted | Refused | Cancelled
+  Status                 String    @default("Draft") @db.NVarChar(20)
+  RejectionReason        String?   @db.NVarChar(500)
+  // Simulation : ne cree aucun vrai compte dans le module Employes (voir
+  // BACKLOG "Conversion candidat -> employe"). Sert a visualiser le point
+  // d'entree avec le client.
+  EmployeeProfileCreated Boolean   @default(false)
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
+
+  application        RecruitmentApplication @relation(fields: [ApplicationId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  template           ContractTemplate?      @relation(fields: [TemplateId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdByEmployee  Employee               @relation("RecruitmentContractCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee?              @relation("RecruitmentContractModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  negotiationRounds ContractNegotiationRound[]
+  trialEmployee     TrialEmployee?
+
+  @@index([TemplateId])
+  @@index([Status])
+  @@index([CreatedBy])
+}
+
+/// Un aller-retour de negociation salariale sur une proposition d'embauche.
+model ContractNegotiationRound {
+  Id         String   @id @default(uuid()) @db.UniqueIdentifier
+  ContractId String   @db.UniqueIdentifier
+  RoundNo    Int
+  // FromParty: HR | Candidate
+  FromParty  String   @db.NVarChar(20)
+  Amount     Decimal? @db.Decimal(18, 2)
+  Comment    String   @db.NVarChar(Max)
+  CreatedAt  DateTime @default(now()) @db.DateTime2
+
+  contract RecruitmentContract @relation(fields: [ContractId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([ContractId])
+}
+
+/// Modele de contrat / convention avec des jetons ({{nom_candidat}}, {{poste}}...)
+/// remplaces a la generation.
+model ContractTemplate {
+  Id           String @id @default(uuid()) @db.UniqueIdentifier
+  Name         String @db.NVarChar(150)
+  ContractType String @db.NVarChar(30)
+  Content      String @db.NVarChar(Max)
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
+
+  createdByEmployee  Employee  @relation("ContractTemplateCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee? @relation("ContractTemplateModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  contracts RecruitmentContract[]
+
+  @@index([CreatedBy])
+}
+
+/// Periode d'essai — cree automatiquement quand une proposition d'embauche
+/// est acceptee (TrialEndDate = StartDate + 2 mois). OnTrial -> Extended* ->
+/// Converted (confirme) | Cancelled.
+model TrialEmployee {
+  Id            String    @id @default(uuid()) @db.UniqueIdentifier
+  ReferenceCode String    @unique @db.NVarChar(20)
+  ContractId    String    @unique @db.UniqueIdentifier
+  EmployeeName  String    @db.NVarChar(150)
+  JobTitle      String    @db.NVarChar(150)
+  EntityName    String    @db.NVarChar(150)
+  StartDate     DateTime  @db.Date
+  TrialEndDate  DateTime  @db.Date
+  // Status: OnTrial | Extended | Converted | Cancelled
+  Status        String    @default("OnTrial") @db.NVarChar(20)
+  EvalScore     Int?
+  EvalComment   String?   @db.NVarChar(Max)
+  EvalByName    String?   @db.NVarChar(150)
+  EvalAt        DateTime? @db.DateTime2
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
+
+  contract           RecruitmentContract @relation(fields: [ContractId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdByEmployee  Employee            @relation("TrialEmployeeCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee?           @relation("TrialEmployeeModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([Status])
+  @@index([CreatedBy])
+}
+
+/// Vivier de talents / CVtheque. Tags stockes en une chaine separee par des
+/// virgules (le service expose un tableau). Open = a recontacter, Closed =
+/// plus d'actualite.
+model TalentPoolEntry {
+  Id                  String   @id @default(uuid()) @db.UniqueIdentifier
+  ReferenceCode       String   @unique @db.NVarChar(20)
+  CandidateName       String   @db.NVarChar(150)
+  CandidateEmail      String   @db.NVarChar(150)
+  CandidatePhone      String   @db.NVarChar(30)
+  Tags                String   @default("") @db.NVarChar(500)
+  Notes               String   @db.NVarChar(Max)
+  // Candidature d'origine si l'entree vient du pipeline — id brut, pas de FK
+  // (l'entree survit a la suppression de la candidature).
+  SourceApplicationId String?  @db.UniqueIdentifier
+  AddedAt             DateTime @db.DateTime2
+  // Status: Open | Closed
+  Status              String   @default("Open") @db.NVarChar(20)
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
+
+  createdByEmployee  Employee  @relation("TalentPoolEntryCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee? @relation("TalentPoolEntryModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  evaluations TalentPoolEvaluation[]
+
+  @@index([Status])
+  @@index([CreatedBy])
+}
+
+/// Evaluation horodatee d'une entree du vivier (historique, plusieurs par entree).
+model TalentPoolEvaluation {
+  Id                String   @id @default(uuid()) @db.UniqueIdentifier
+  TalentPoolEntryId String   @db.UniqueIdentifier
+  Score             Int
+  Comment           String   @db.NVarChar(Max)
+  EvaluatedByName   String   @db.NVarChar(150)
+  CreatedAt         DateTime @default(now()) @db.DateTime2
+
+  entry TalentPoolEntry @relation(fields: [TalentPoolEntryId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([TalentPoolEntryId])
 }
