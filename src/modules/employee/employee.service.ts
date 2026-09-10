@@ -15,6 +15,20 @@ import { bulkImport } from '../../common/utils/bulk-import.util';
 
 type TxClient = Prisma.TransactionClient | PrismaService;
 
+// Permissions qui rendent un employe reellement eligible comme validateur
+// (pool par entite OU validateur direct par employe). Renvoyees par findAll()
+// a partir des DROITS EFFECTIFS du compte (UserPermission), pas du gabarit de
+// sa categorie qui peut avoir diverge depuis la creation du compte (voir
+// decision du 29/07 et assertValidDirectValidator ci-dessous) — sans ca, un
+// droit accorde individuellement (ex: CONGE_VALIDER sur un compte dont la
+// categorie ne l'a pas) n'apparaissait jamais dans les selecteurs de
+// validateur cote frontend, alors que le backend l'aurait accepte.
+const VALIDATOR_PERMISSION_CODES = [
+  'CONGE_VALIDER',
+  'MISSION_VALIDER',
+  'FRAIS_VALIDER',
+] as const;
+
 @Injectable()
 export class EmployeeService {
   private readonly logger = new Logger(EmployeeService.name);
@@ -162,10 +176,32 @@ export class EmployeeService {
   // IsSystem exclut le compte d'amorcage seede ("Admin Galana") — pas un
   // vrai membre du personnel, ne doit jamais apparaitre dans une liste ou
   // un selecteur (voir migration IsSystem + prisma/backfill-employee-is-system.ts).
-  findAll() {
-    return this.prisma.employee.findMany({
+  async findAll() {
+    const employees = await this.prisma.employee.findMany({
       where: { IsSystem: false, IsDeleted: false },
+      include: {
+        user: {
+          select: {
+            IsActive: true,
+            userPermissions: {
+              select: { permission: { select: { Code: true } } },
+            },
+          },
+        },
+      },
     });
+    // ValidatorPermissions : droits de validation REELLEMENT accordes au
+    // compte (voir VALIDATOR_PERMISSION_CODES en tete de fichier). Compte
+    // inactif ou absent => liste vide. Le champ `user` brut est retire de la
+    // reponse, seul le tableau derive est expose.
+    return employees.map(({ user, ...employee }) => ({
+      ...employee,
+      ValidatorPermissions: user?.IsActive
+        ? VALIDATOR_PERMISSION_CODES.filter((code) =>
+            user.userPermissions.some((up) => up.permission.Code === code),
+          )
+        : [],
+    }));
   }
 
   // Annuaire minimal, ouvert a tout employe authentifie (pas de permission
