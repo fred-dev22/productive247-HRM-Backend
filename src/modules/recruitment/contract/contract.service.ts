@@ -19,8 +19,11 @@ const INCLUDE = {
       ReferenceCode: true,
       CandidateName: true,
       CandidateEmail: true,
+      CandidatePhone: true,
       CreatedBy: true,
       JobOfferId: true,
+      EmployeeId: true,
+      employee: { select: { Id: true, FullName: true, Status: true, IsDeleted: true } },
     },
   },
   template: { select: { Id: true, Name: true, ContractType: true } },
@@ -362,22 +365,6 @@ export class ContractService {
     const row = await this.prisma.recruitmentContract.update({
       where: { Id: id },
       data: { Status: 'Cancelled', ModifiedBy: employeeId, ModifiedAt: new Date() },
-      include: INCLUDE,
-    });
-    this.notify.broadcast();
-    return row;
-  }
-
-  // Simulation (voir RecruitmentContract.EmployeeProfileCreated) : ne cree
-  // aucun vrai compte dans le module Employes.
-  async markEmployeeProfileCreated(id: string, employeeId: string) {
-    const existing = await this.findRaw(id);
-    if (existing.Status !== 'Accepted') {
-      throw new BadRequestException('Le profil employe ne peut etre cree qu\'apres acceptation');
-    }
-    const row = await this.prisma.recruitmentContract.update({
-      where: { Id: id },
-      data: { EmployeeProfileCreated: true, ModifiedBy: employeeId, ModifiedAt: new Date() },
       include: INCLUDE,
     });
     this.notify.broadcast();

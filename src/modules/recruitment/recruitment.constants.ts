@@ -36,3 +36,33 @@ export const TRIAL_PERIOD_MONTHS = 2;
 // du 05/09). Applique aux libelles seedes (modeles de contrat) et a tout
 // texte genere cote backend.
 export const CLIENT_SHORT_NAME = 'HV';
+
+// ── Diffusion multi-plateformes des offres (backlog) ────────────────────
+export const DISTRIBUTION_CHANNEL_KINDS = ['Webhook', 'RssOnly', 'Manual', 'Email'] as const;
+export const JOB_OFFER_DISTRIBUTION_STATUSES = ['Pending', 'Sent', 'Failed', 'Posted', 'Skipped'] as const;
+export const DISTRIBUTION_TRIGGERS = ['Publish', 'Close', 'Manual'] as const;
+// Delai max d'un POST webhook sortant (relais Zapier/Make/n8n).
+export const WEBHOOK_TIMEOUT_MS = 8_000;
+// Cache de rendu des flux publics feed.json / feed.xml.
+export const FEED_RENDER_TTL_MS = 60_000;
+// Longueur max d'une description d'offre dans les flux (coupe proprement).
+export const FEED_DESCRIPTION_MAX = 5_000;
+// RSVP entretien : delai (min) d'une invitation calendrier.
+export const INTERVIEW_DEFAULT_DURATION_MIN = 60;
+
+// ── Conversion candidat -> employe (backlog) ────────────────────────────
+// Type de contrat cote Recrutement (FR) -> enum Employee (EN, voir
+// CreateEmployeeDto.ContractType). Aligne sur src/stores/employees.ts
+// (CONTRACT_TYPE_TO_BACKEND) cote frontend.
+export const RECRUITMENT_TO_EMPLOYEE_CONTRACT_TYPE: Record<string, string> = {
+  CDI: 'Permanent',
+  CDD: 'FixedTerm',
+  Stage: 'Internship',
+  Freelance: 'Freelance',
+  Apprenti: 'Apprenticeship',
+  Alternant: 'WorkStudy',
+  // Variantes / libelles longs rencontres dans les modeles de contrat seedes.
+  Apprentissage: 'Apprenticeship',
+  Alternance: 'WorkStudy',
+  Essai: 'Permanent',
+};

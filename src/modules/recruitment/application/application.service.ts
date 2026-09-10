@@ -2,7 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../../prisma/prisma.service';
 import { RecruitmentNotifyService } from '../recruitment-notify.service';
 import { REFERENCE_PREFIXES, APPLICATION_EDITABLE_STATUSES } from '../recruitment.constants';
-import { nextReferenceCode, joinTags } from '../recruitment.util';
+import { nextReferenceCode, joinTags, withReferenceCodeRetry } from '../recruitment.util';
+import { RecruitmentAttachmentService } from '../attachments/recruitment-attachment.service';
 import {
   CreateApplicationDto,
   UpdateApplicationDto,
@@ -29,6 +30,7 @@ export class ApplicationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notify: RecruitmentNotifyService,
+    private readonly attachments: RecruitmentAttachmentService,
   ) {}
 
   private async findRaw(id: string) {
@@ -74,26 +76,98 @@ export class ApplicationService {
     return row;
   }
 
-  async create(dto: CreateApplicationDto, employeeId: string) {
+  async create(dto: CreateApplicationDto, employeeId: string, cv?: Express.Multer.File) {
     const jobOfferTitle = await this.resolveOfferTitle(dto.JobOfferId);
-    const row = await this.prisma.recruitmentApplication.create({
-      data: {
-        ReferenceCode: await this.refCode(),
-        JobOfferId: dto.JobOfferId,
-        JobOfferTitle: jobOfferTitle,
-        CandidateName: dto.CandidateName,
-        CandidateEmail: dto.CandidateEmail,
-        CandidatePhone: dto.CandidatePhone,
-        Source: dto.Source,
-        CvFileName: dto.CvFileName,
-        Status: 'New',
-        AppliedAt: new Date(),
-        CreatedBy: employeeId,
-      },
-      include: INCLUDE,
-    });
+    // Upload SharePoint AVANT la transaction : un appel reseau long ne doit
+    // pas maintenir une transaction DB ouverte. Si l'upload echoue (503),
+    // aucune candidature n'est creee.
+    const uploaded = cv ? await this.attachments.uploadToSharePoint(cv) : null;
+    const row = await withReferenceCodeRetry(() =>
+      this.prisma.$transaction(async (tx) => {
+        const created = await tx.recruitmentApplication.create({
+          data: {
+            ReferenceCode: await this.refCode(),
+            JobOfferId: dto.JobOfferId,
+            JobOfferTitle: jobOfferTitle,
+            CandidateName: dto.CandidateName,
+            CandidateEmail: dto.CandidateEmail,
+            CandidatePhone: dto.CandidatePhone,
+            Source: dto.Source,
+            CvFileName: uploaded ? uploaded.fileName : dto.CvFileName,
+            Status: 'New',
+            AppliedAt: new Date(),
+            CreatedBy: employeeId,
+          },
+          include: INCLUDE,
+        });
+        if (uploaded) {
+          await tx.attachment.create({
+            data: this.attachments.attachmentData(
+              'RecruitmentApplication',
+              created.Id,
+              uploaded,
+              employeeId,
+            ),
+          });
+        }
+        return created;
+      }),
+    );
     this.notify.broadcast();
     return row;
+  }
+
+  // Pieces jointes d'une candidature (CV reel + documents annexes). Portees
+  // par des lignes Attachment polymorphes ; RECRUTEMENT_ACCES (classe du
+  // controleur) suffit, pas de controle proprietaire.
+  async listDocuments(id: string) {
+    const app = await this.findRaw(id);
+    return this.attachments.listFor('RecruitmentApplication', id, app.CvFileName);
+  }
+
+  async addDocument(
+    id: string,
+    file: Express.Multer.File | undefined,
+    employeeId: string,
+    setPrimaryCv: boolean,
+  ) {
+    const app = await this.findRaw(id);
+    if (!file) {
+      throw new BadRequestException('Le fichier est obligatoire.');
+    }
+    const uploaded = await this.attachments.uploadToSharePoint(file);
+    const doc = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.attachment.create({
+        data: this.attachments.attachmentData('RecruitmentApplication', id, uploaded, employeeId),
+      });
+      if (setPrimaryCv) {
+        await tx.recruitmentApplication.update({
+          where: { Id: id },
+          data: { CvFileName: uploaded.fileName, ModifiedBy: employeeId, ModifiedAt: new Date() },
+        });
+      }
+      return created;
+    });
+    this.notify.broadcast();
+    return this.attachments.shapeDoc(doc, setPrimaryCv ? uploaded.fileName : app.CvFileName);
+  }
+
+  async removeDocument(id: string, attachmentId: string, employeeId: string) {
+    const app = await this.findRaw(id);
+    const removed = await this.attachments.removeFor(
+      'RecruitmentApplication',
+      id,
+      attachmentId,
+      'Document introuvable pour cette candidature',
+    );
+    if (app.CvFileName && removed.FileName === app.CvFileName) {
+      await this.prisma.recruitmentApplication.update({
+        where: { Id: id },
+        data: { CvFileName: null, ModifiedBy: employeeId, ModifiedAt: new Date() },
+      });
+    }
+    this.notify.broadcast();
+    return { ok: true };
   }
 
   // Candidature interne (mobilite, US12) : un employe deja dans le systeme

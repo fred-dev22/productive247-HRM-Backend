@@ -1,5 +1,7 @@
 import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
+// Portail carriere public. Le CV est un vrai fichier televerse (partie
+// multipart `cv`), plus un simple nom : le champ CvFileName a ete retire.
 export class PublicApplyDto {
   @IsString()
   @IsNotEmpty()
@@ -14,11 +16,35 @@ export class PublicApplyDto {
   @MaxLength(30)
   CandidatePhone: string;
 
-  // Le portail public ne stocke pas le fichier (voir mock) : seul le nom du
-  // CV est conserve, la piece est transmise par un autre canal / demandee
-  // ensuite. L'anti-spam du portail reste a faire (voir BACKLOG).
+  // --- Anti-spam du portail carriere ---
+  // Website / Fax sont des champs POT-DE-MIEL : invisibles pour un humain
+  // (positionnes hors ecran cote SPA), ils DOIVENT quand meme etre declares
+  // ici car le ValidationPipe global tourne avec forbidNonWhitelisted:true —
+  // un bot qui les remplit serait sinon rejete par un 400 generique, ce qui
+  // trahirait la detection. Declares + ignores cote service, le rejet reste
+  // silencieux (meme reponse qu'une vraie candidature).
   @IsOptional()
   @IsString()
-  @MaxLength(255)
-  CvFileName?: string;
+  @MaxLength(200)
+  Website?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  Fax?: string;
+
+  // Jeton de formulaire HMAC sans etat (emis par GET /public/careers/form-token
+  // ou embarque dans GET /public/careers/:token). Verifie l'age du formulaire
+  // et l'usage unique.
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  FormToken?: string;
+
+  // Jeton Cloudflare Turnstile (facultatif : present seulement si
+  // VITE_TURNSTILE_SITE_KEY est configure cote SPA).
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  CaptchaToken?: string;
 }

@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { InterviewService } from './interview.service';
 import { ScheduleInterviewDto, UpdateInterviewDto, EvaluateInterviewDto } from './dto/interview.dto';
+import { ManualRsvpDto } from './dto/interview-rsvp.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 
@@ -50,5 +51,15 @@ export class InterviewController {
     @CurrentUser('employeeId') employeeId: string,
   ) {
     return this.service.evaluate(id, dto, employeeId);
+  }
+
+  // Correction manuelle d'une reponse a l'invitation (candidat ou participant).
+  @Post(':id/rsvp')
+  setRsvp(
+    @Param('id') id: string,
+    @Body() dto: ManualRsvpDto,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
+    return this.service.setRsvp(id, dto, employeeId);
   }
 }

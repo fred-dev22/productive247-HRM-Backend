@@ -3,13 +3,23 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { RecruitmentNotifyService } from '../recruitment-notify.service';
 import { REFERENCE_PREFIXES } from '../recruitment.constants';
 import { nextReferenceCode } from '../recruitment.util';
-import { IcsAttendee } from '../ics.util';
+import { generateApprovalToken } from '../../../common/approval-token';
+import { InterviewRsvpService } from './interview-rsvp.service';
+import { ManualRsvpDto } from './dto/interview-rsvp.dto';
 import {
   ScheduleInterviewDto,
   UpdateInterviewDto,
   EvaluateInterviewDto,
   InterviewParticipantDto,
 } from './dto/interview.dto';
+
+// Participant resolu (annuaire complete) + son jeton RSVP opaque.
+interface ParticipantWithToken {
+  EmployeeId: string | null;
+  Name: string;
+  Email: string | null;
+  rsvpToken: string;
+}
 
 const DEFAULT_DURATION_MIN = 60;
 
@@ -34,6 +44,7 @@ export class InterviewService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notify: RecruitmentNotifyService,
+    private readonly rsvp: InterviewRsvpService,
   ) {}
 
   private async findRaw(id: string) {
@@ -104,7 +115,14 @@ export class InterviewService {
       throw new NotFoundException(`Candidature ${dto.ApplicationId} introuvable`);
     }
     this.validateModeFields(dto.Mode, dto.Location, dto.MeetingLink);
-    const participants = await this.resolveParticipants(dto.Participants ?? []);
+    const resolved = await this.resolveParticipants(dto.Participants ?? []);
+    // Un jeton RSVP opaque par participant + un pour le candidat (pose sur
+    // l'entretien). Generes une seule fois ici (backlog "Suivi des reponses").
+    const participants: ParticipantWithToken[] = resolved.map((p) => ({
+      ...p,
+      rsvpToken: generateApprovalToken(),
+    }));
+    const candidateRsvpToken = generateApprovalToken();
     const start = new Date(dto.ScheduledAt);
     const duration = dto.DurationMinutes ?? DEFAULT_DURATION_MIN;
 
@@ -120,9 +138,15 @@ export class InterviewService {
           Location: dto.Mode === 'InPerson' ? dto.Location : null,
           MeetingLink: dto.Mode === 'VideoCall' ? dto.MeetingLink : null,
           Status: 'Scheduled',
+          CandidateRsvpToken: candidateRsvpToken,
           CreatedBy: employeeId,
           participants: {
-            create: participants.map((p) => ({ EmployeeId: p.EmployeeId, Name: p.Name, Email: p.Email })),
+            create: participants.map((p) => ({
+              EmployeeId: p.EmployeeId,
+              Name: p.Name,
+              Email: p.Email,
+              RsvpToken: p.rsvpToken,
+            })),
           },
         },
         include: INCLUDE,
@@ -153,9 +177,10 @@ export class InterviewService {
       meetingLink: dto.MeetingLink,
       organizerName: organizer.name,
       organizerEmail: organizer.email,
+      candidateRsvpToken,
       participants: participants
         .filter((p) => !!p.Email)
-        .map<IcsAttendee>((p) => ({ name: p.Name, email: p.Email as string })),
+        .map((p) => ({ name: p.Name, email: p.Email as string, rsvpToken: p.rsvpToken })),
     });
     this.notify.broadcast();
     return this.findOne(created.Id);
@@ -173,15 +198,35 @@ export class InterviewService {
     const start = dto.ScheduledAt ? new Date(dto.ScheduledAt) : existing.ScheduledAt;
     const duration = dto.DurationMinutes ?? DEFAULT_DURATION_MIN;
 
-    const participants = dto.Participants
-      ? await this.resolveParticipants(dto.Participants)
-      : existing.participants.map((p) => ({ EmployeeId: p.EmployeeId, Name: p.Name, Email: p.Email }));
+    // Nouvelle liste de participants -> anciennes lignes (et leurs jetons)
+    // supprimees, nouvelles lignes avec un jeton frais. Liste inchangee ->
+    // on garde les lignes et leurs jetons, mais on remet Rsvp a "Pending"
+    // (le nouveau .ics porte un SEQUENCE incremente + NEEDS-ACTION, la reponse
+    // precedente ne s'applique plus). Le jeton candidat est conserve dans les
+    // deux cas ; seule sa reponse est remise a zero.
+    const newParticipants: ParticipantWithToken[] | null = dto.Participants
+      ? (await this.resolveParticipants(dto.Participants)).map((p) => ({
+          ...p,
+          rsvpToken: generateApprovalToken(),
+        }))
+      : null;
 
     await this.prisma.$transaction(async (tx) => {
-      if (dto.Participants) {
+      if (newParticipants) {
         await tx.interviewParticipant.deleteMany({ where: { InterviewId: id } });
         await tx.interviewParticipant.createMany({
-          data: participants.map((p) => ({ InterviewId: id, EmployeeId: p.EmployeeId, Name: p.Name, Email: p.Email })),
+          data: newParticipants.map((p) => ({
+            InterviewId: id,
+            EmployeeId: p.EmployeeId,
+            Name: p.Name,
+            Email: p.Email,
+            RsvpToken: p.rsvpToken,
+          })),
+        });
+      } else {
+        await tx.interviewParticipant.updateMany({
+          where: { InterviewId: id },
+          data: { Rsvp: 'Pending', RsvpAt: null, RsvpSource: null },
         });
       }
       await tx.interview.update({
@@ -191,11 +236,22 @@ export class InterviewService {
           Mode: mode,
           Location: mode === 'InPerson' ? location : null,
           MeetingLink: mode === 'VideoCall' ? meetingLink : null,
+          CandidateRsvp: 'Pending',
+          CandidateRsvpAt: null,
+          CandidateRsvpSource: null,
           ModifiedBy: employeeId,
           ModifiedAt: new Date(),
         },
       });
     });
+
+    const notifyParticipants = newParticipants
+      ? newParticipants
+          .filter((p) => !!p.Email)
+          .map((p) => ({ name: p.Name, email: p.Email as string, rsvpToken: p.rsvpToken }))
+      : existing.participants
+          .filter((p) => !!p.Email)
+          .map((p) => ({ name: p.Name, email: p.Email as string, rsvpToken: p.RsvpToken }));
 
     const app = await this.prisma.recruitmentApplication.findUniqueOrThrow({ where: { Id: existing.ApplicationId } });
     const organizer = await this.organizerIdentity(employeeId);
@@ -213,9 +269,8 @@ export class InterviewService {
       meetingLink,
       organizerName: organizer.name,
       organizerEmail: organizer.email,
-      participants: participants
-        .filter((p) => !!p.Email)
-        .map<IcsAttendee>((p) => ({ name: p.Name, email: p.Email as string })),
+      candidateRsvpToken: existing.CandidateRsvpToken,
+      participants: notifyParticipants,
     });
     this.notify.broadcast();
     return this.findOne(id);
@@ -246,11 +301,20 @@ export class InterviewService {
       meetingLink: existing.MeetingLink,
       organizerName: organizer.name,
       organizerEmail: organizer.email,
+      candidateRsvpToken: existing.CandidateRsvpToken,
       participants: existing.participants
         .filter((p) => !!p.Email)
-        .map<IcsAttendee>((p) => ({ name: p.Name, email: p.Email as string })),
+        .map((p) => ({ name: p.Name, email: p.Email as string, rsvpToken: p.RsvpToken })),
     });
     this.notify.broadcast();
+    return this.findOne(id);
+  }
+
+  // Correction manuelle d'une reponse RSVP par un RH (route authentifiee,
+  // deja sous RECRUTEMENT_ACCES). Le detail est porte par InterviewRsvpService,
+  // ici on ne fait que renvoyer l'entretien complet apres coup.
+  async setRsvp(id: string, dto: ManualRsvpDto, employeeId: string) {
+    await this.rsvp.setRsvpManual(id, dto, employeeId);
     return this.findOne(id);
   }
 

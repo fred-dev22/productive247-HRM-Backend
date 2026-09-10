@@ -1,4 +1,17 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseFilters,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApplicationService } from './application.service';
 import {
   CreateApplicationDto,
@@ -8,22 +21,62 @@ import {
   AddToTalentPoolDto,
   SelfApplyDto,
 } from './dto/application.dto';
+import { UploadApplicationDocumentDto } from '../attachments/dto/upload-document.dto';
+import { RECRUITMENT_UPLOAD, cvFileFilter } from '../attachments/recruitment-upload.util';
+import { RecruitmentUploadExceptionFilter } from '../attachments/recruitment-upload-exception.filter';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 
+const CV_UPLOAD_OPTS = {
+  limits: { fileSize: RECRUITMENT_UPLOAD.MAX_BYTES },
+  fileFilter: cvFileFilter,
+};
+
 @Controller('recruitment/applications')
 @RequirePermission('RECRUTEMENT_ACCES')
+@UseFilters(RecruitmentUploadExceptionFilter)
 export class ApplicationController {
   constructor(private readonly service: ApplicationService) {}
 
   @Post()
-  create(@Body() dto: CreateApplicationDto, @CurrentUser('employeeId') employeeId: string) {
-    return this.service.create(dto, employeeId);
+  @UseInterceptors(FileInterceptor('cv', CV_UPLOAD_OPTS))
+  create(
+    @Body() dto: CreateApplicationDto,
+    @CurrentUser('employeeId') employeeId: string,
+    @UploadedFile() cv?: Express.Multer.File,
+  ) {
+    return this.service.create(dto, employeeId, cv);
   }
 
   @Get()
   findAll(@Query('source') source?: string, @Query('jobOfferId') jobOfferId?: string) {
     return this.service.findAll({ source, jobOfferId });
+  }
+
+  // Sous-routes documents (CV reel + pieces jointes). Doivent rester avant ':id'.
+  @Get(':id/documents')
+  listDocuments(@Param('id') id: string) {
+    return this.service.listDocuments(id);
+  }
+
+  @Post(':id/documents')
+  @UseInterceptors(FileInterceptor('file', CV_UPLOAD_OPTS))
+  addDocument(
+    @Param('id') id: string,
+    @Body() dto: UploadApplicationDocumentDto,
+    @CurrentUser('employeeId') employeeId: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.service.addDocument(id, file, employeeId, dto.setPrimaryCv === 'true');
+  }
+
+  @Delete(':id/documents/:attachmentId')
+  removeDocument(
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+    @CurrentUser('employeeId') employeeId: string,
+  ) {
+    return this.service.removeDocument(id, attachmentId, employeeId);
   }
 
   @Get(':id')

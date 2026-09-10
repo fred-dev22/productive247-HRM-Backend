@@ -3,8 +3,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
 import { MailService } from '../mail/mail.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
-import { renderEmailHtml, frontendOrigin, EmailAccent } from '../mail/email-templates';
+import { renderEmailHtml, frontendOrigin, EmailAccent, EmailActionButton } from '../mail/email-templates';
 import { buildInviteIcs, IcsAttendee } from './ics.util';
+
+// Lien de la page publique de reponse a une invitation entretien (backlog
+// "Suivi des reponses"). La page (SPA) appelle ensuite l'API ; le lien reste
+// un GET sans effet de bord, seul le clic sur la page enregistre la reponse.
+function rsvpUrl(token: string, response: 'accepted' | 'declined' | 'tentative'): string {
+  return `${frontendOrigin()}/entretien-rsvp/${token}?response=${response}`;
+}
 
 // Effets de bord du module Recrutement regroupes ici : rafraichissement
 // temps reel des ecrans, notifications in-app (cloche) au recruteur, emails
@@ -113,7 +120,11 @@ export class RecruitmentNotifyService {
     meetingLink?: string | null;
     organizerName: string;
     organizerEmail: string;
-    participants: IcsAttendee[];
+    // Jeton RSVP opaque du candidat (pose sur l'entretien) ; null si l'entretien
+    // est anterieur a la fonctionnalite ou si aucun jeton n'a ete emis.
+    candidateRsvpToken: string | null;
+    // Un jeton RSVP par participant (null = pas de jeton -> pas de boutons).
+    participants: Array<{ name: string; email: string; rsvpToken: string | null }>;
   }): Promise<void> {
     const end = new Date(params.start.getTime() + params.durationMinutes * 60_000);
     const place =
@@ -134,6 +145,16 @@ export class RecruitmentNotifyService {
       ...params.participants,
     ].filter((a) => !!a.email);
 
+    // email (minuscule) -> jeton RSVP, pour ajouter les boutons Accepter /
+    // Refuser / Peut-etre dans l'email d'invitation (jamais pour une annulation).
+    const rsvpTokenByEmail = new Map<string, string>();
+    if (params.candidateEmail && params.candidateRsvpToken) {
+      rsvpTokenByEmail.set(params.candidateEmail.toLowerCase(), params.candidateRsvpToken);
+    }
+    for (const p of params.participants) {
+      if (p.email && p.rsvpToken) rsvpTokenByEmail.set(p.email.toLowerCase(), p.rsvpToken);
+    }
+
     const ics = buildInviteIcs({
       uid: `interview-${params.interviewId}@productive247`,
       sequence: params.sequence,
@@ -151,6 +172,14 @@ export class RecruitmentNotifyService {
     const verb = params.method === 'CANCEL' ? 'Annulation' : 'Invitation';
 
     for (const a of attendees) {
+      const rsvpToken = params.method === 'REQUEST' ? rsvpTokenByEmail.get(a.email.toLowerCase()) : undefined;
+      const actionButtons: EmailActionButton[] | undefined = rsvpToken
+        ? [
+            { label: 'Accepter', color: 'primary', href: rsvpUrl(rsvpToken, 'accepted') },
+            { label: 'Refuser', color: 'danger', href: rsvpUrl(rsvpToken, 'declined') },
+            { label: 'Peut-etre', color: 'warning', href: rsvpUrl(rsvpToken, 'tentative') },
+          ]
+        : undefined;
       try {
         await this.mail.send({
           to: a.email,
@@ -173,6 +202,7 @@ export class RecruitmentNotifyService {
                     { label: 'Date', value: params.start.toLocaleString('fr-FR') },
                     { label: params.mode === 'VideoCall' ? 'Lien' : 'Lieu', value: place },
                   ],
+            actionButtons,
           }),
           attachments: [
             {

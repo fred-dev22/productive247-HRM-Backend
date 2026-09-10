@@ -29,10 +29,13 @@ import { NotificationModule } from './modules/notification/notification.module';
 import { AttachmentModule } from './modules/attachment/attachment.module';
 import { PublicApprovalModule } from './modules/public-approval/public-approval.module';
 import { RecruitmentModule } from './modules/recruitment/recruitment.module';
+import { RemindersModule } from './modules/reminders/reminders.module';
+import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    RateLimitModule,
     PrismaModule,
     AuthModule,
     OrganizationUnitModule,
@@ -60,6 +63,7 @@ import { RecruitmentModule } from './modules/recruitment/recruitment.module';
     AttachmentModule,
     PublicApprovalModule,
     RecruitmentModule,
+    RemindersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

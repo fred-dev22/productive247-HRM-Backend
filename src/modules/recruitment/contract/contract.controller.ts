@@ -10,6 +10,9 @@ import {
 } from './dto/contract.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { CurrentPermissions } from '../../../common/decorators/current-permissions.decorator';
+import { EmployeeConversionService } from './employee-conversion.service';
+import { ConvertContractToEmployeeDto } from './dto/convert-to-employee.dto';
 
 @Controller('recruitment/contract-templates')
 @RequirePermission('RECRUTEMENT_ACCES')
@@ -44,7 +47,10 @@ export class ContractTemplateController {
 @Controller('recruitment/contracts')
 @RequirePermission('RECRUTEMENT_ACCES')
 export class ContractController {
-  constructor(private readonly service: ContractService) {}
+  constructor(
+    private readonly service: ContractService,
+    private readonly conversionService: EmployeeConversionService,
+  ) {}
 
   // Doit rester avant ':id'.
   @Get('eligible-applications')
@@ -109,8 +115,18 @@ export class ContractController {
     return this.service.cancel(id, employeeId);
   }
 
-  @Post(':id/employee-profile')
-  markEmployeeProfileCreated(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
-    return this.service.markEmployeeProfileCreated(id, employeeId);
+  // Conversion du contrat accepte en employe reel ("Inclusion d'un Potentiel").
+  // RECRUTEMENT_ACCES (classe) donne l'acces a la route ; EMPLOYE_CREER est
+  // verifie dans EmployeeConversionService a partir de @CurrentPermissions()
+  // (un @RequirePermission de methode REMPLACERAIT la permission de classe,
+  // voir PermissionGuard.reflector.getAllAndOverride).
+  @Post(':id/convert-to-employee')
+  convertToEmployee(
+    @Param('id') id: string,
+    @Body() dto: ConvertContractToEmployeeDto,
+    @CurrentUser('employeeId') employeeId: string,
+    @CurrentPermissions() permissions: Set<string>,
+  ) {
+    return this.conversionService.convertContract(id, dto, employeeId, permissions);
   }
 }

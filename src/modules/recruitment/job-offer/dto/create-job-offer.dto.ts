@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class CreateJobOfferDto {
   @IsOptional()
@@ -33,4 +33,15 @@ export class CreateJobOfferDto {
   @IsOptional()
   @IsUUID()
   InterviewEvaluationTemplateId?: string;
+
+  // Retirer cette offre des flux publics /public/careers/feed.* (poste confidentiel).
+  @IsOptional()
+  @IsBoolean()
+  ExcludeFromFeed?: boolean;
+
+  // Remuneration affichee dans les flux et le contenu a partager (texte libre).
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  SalaryText?: string;
 }

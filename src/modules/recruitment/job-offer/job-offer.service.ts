@@ -4,6 +4,8 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { RecruitmentNotifyService } from '../recruitment-notify.service';
 import { REFERENCE_PREFIXES } from '../recruitment.constants';
 import { nextReferenceCode } from '../recruitment.util';
+import { RecruitmentAttachmentService } from '../attachments/recruitment-attachment.service';
+import { DistributionDispatchService } from '../distribution/distribution-dispatch.service';
 import { CreateJobOfferDto } from './dto/create-job-offer.dto';
 import { UpdateJobOfferDto, CloseJobOfferDto } from './dto/update-job-offer.dto';
 
@@ -23,6 +25,8 @@ export class JobOfferService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notify: RecruitmentNotifyService,
+    private readonly attachments: RecruitmentAttachmentService,
+    private readonly dispatch: DistributionDispatchService,
   ) {}
 
   private async findRaw(id: string) {
@@ -56,6 +60,8 @@ export class JobOfferService {
         Location: dto.Location,
         Description: dto.Description,
         InterviewEvaluationTemplateId: dto.InterviewEvaluationTemplateId,
+        ExcludeFromFeed: dto.ExcludeFromFeed ?? false,
+        SalaryText: dto.SalaryText ?? null,
         Status: 'Draft',
         PublicToken: randomBytes(24).toString('hex'),
         CreatedBy: employeeId,
@@ -106,6 +112,8 @@ export class JobOfferService {
         ContractType: dto.ContractType ?? existing.ContractType,
         Location: dto.Location ?? existing.Location,
         Description: dto.Description ?? existing.Description,
+        ExcludeFromFeed: dto.ExcludeFromFeed ?? existing.ExcludeFromFeed,
+        SalaryText: dto.SalaryText !== undefined ? dto.SalaryText : existing.SalaryText,
         InterviewEvaluationTemplateId:
           dto.InterviewEvaluationTemplateId !== undefined
             ? dto.InterviewEvaluationTemplateId
@@ -133,6 +141,9 @@ export class JobOfferService {
       include: INCLUDE,
     });
     this.notify.broadcast();
+    // Fire-and-forget : ne bloque jamais la reponse HTTP, ne peut pas
+    // annuler la publication (voir DistributionDispatchService).
+    void this.dispatch.dispatchForOffer(row.Id, 'Publish').catch(() => {});
     return row;
   }
 
@@ -152,6 +163,7 @@ export class JobOfferService {
       include: INCLUDE,
     });
     this.notify.broadcast();
+    void this.dispatch.dispatchForOffer(row.Id, 'Close').catch(() => {});
     return row;
   }
 
@@ -164,6 +176,37 @@ export class JobOfferService {
       where: { Id: id },
       data: { IsDeleted: true, DeletedBy: employeeId, DeletedAt: new Date() },
     });
+    this.notify.broadcast();
+    return { ok: true };
+  }
+
+  // Pieces jointes d'une offre (PDF de l'annonce, grille d'evaluation
+  // imprimee...). Portees par des lignes Attachment polymorphes
+  // (EntityType='JobOffer'). RECRUTEMENT_ACCES (classe du controleur) suffit.
+  async listDocuments(id: string) {
+    await this.findRaw(id);
+    return this.attachments.listFor('JobOffer', id);
+  }
+
+  async addDocument(id: string, file: Express.Multer.File | undefined, employeeId: string) {
+    await this.findRaw(id);
+    if (!file) {
+      throw new BadRequestException('Le fichier est obligatoire.');
+    }
+    const doc = await this.attachments.uploadAndRecord('JobOffer', id, file, employeeId);
+    this.notify.broadcast();
+    return doc;
+  }
+
+  async removeDocument(id: string, attachmentId: string, employeeId: string) {
+    await this.findRaw(id);
+    await this.attachments.removeFor(
+      'JobOffer',
+      id,
+      attachmentId,
+      'Document introuvable pour cette offre',
+    );
+    void employeeId; // pas d'audit sur la ligne Attachment (parite AttachmentService)
     this.notify.broadcast();
     return { ok: true };
   }

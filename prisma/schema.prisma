@@ -343,10 +343,22 @@ model Employee {
   talentPoolEntriesCreated           TalentPoolEntry[]             @relation("TalentPoolEntryCreatedBy")
   talentPoolEntriesModified          TalentPoolEntry[]             @relation("TalentPoolEntryModifiedBy")
 
+  // Diffusion multi-plateformes des offres (backlog)
+  distributionChannelsCreated   DistributionChannel[]  @relation("DistributionChannelCreatedBy")
+  distributionChannelsModified  DistributionChannel[]  @relation("DistributionChannelModifiedBy")
+  jobOfferDistributionsCreated  JobOfferDistribution[] @relation("JobOfferDistributionCreatedBy")
+  jobOfferDistributionsModified JobOfferDistribution[] @relation("JobOfferDistributionModifiedBy")
+
+  // Conversion candidat -> employe (backlog "Inclusion d'un Potentiel")
+  recruitmentContractsAsCreatedEmployee RecruitmentContract[] @relation("RecruitmentContractCreatedEmployee")
+  trialEmployeesAsCreatedEmployee       TrialEmployee[]       @relation("TrialEmployeeCreatedEmployee")
+
   @@index([PositionId])
   @@index([OrganizationUnitId])
   @@index([EmployeeCategoryId])
   @@index([DirectValidatorId])
+  // Rappels d'echeances (backlog) : fins de CDD / stage sur une periode
+  @@index([ContractType, TerminationDate])
 }
 
 /// Compte utilisateur donnant acces a la plateforme AfrikEdge / Productive
@@ -1169,7 +1181,7 @@ model ExpenseCeiling {
 model Attachment {
   Id String @id @default(uuid()) @db.UniqueIdentifier
 
-  // EntityType: LeaveRequest | MissionOrder | ExpenseReport | ExpenseLine
+  // EntityType: LeaveRequest | MissionOrder | ExpenseReport | ExpenseLine | RecruitmentApplication | JobOffer
   EntityType String @db.NVarChar(30)
   EntityId   String @db.UniqueIdentifier
   FileName   String @db.NVarChar(255)
@@ -1194,7 +1206,7 @@ model Attachment {
 model Notification {
   Id         String   @id @default(uuid()) @db.UniqueIdentifier
   EmployeeId String   @db.UniqueIdentifier
-  // Type: leave | mission | expense | system — pilote l'icone cote frontend.
+  // Type: leave | mission | expense | recruitment | reminder | system — pilote l'icone cote frontend.
   Type       String   @db.NVarChar(20)
   Title      String   @db.NVarChar(150)
   Message    String   @db.NVarChar(500)
@@ -1271,6 +1283,10 @@ model JobOffer {
   Status                        String    @default("Draft") @db.NVarChar(20)
   PublishedAt                   DateTime? @db.DateTime2
   Views                         Int       @default(0)
+  // Retire cette offre des flux publics /public/careers/feed.* (poste confidentiel).
+  ExcludeFromFeed               Boolean   @default(false)
+  // Remuneration affichee dans les flux et le contenu a partager (texte libre).
+  SalaryText                    String?   @db.NVarChar(120)
   // Cout total de la campagne (annonces, cabinet...) saisi a la cloture, en
   // MGA — sert au "cout par recrutement" du pipeline.
   RecruitmentCost               Decimal?  @db.Decimal(18, 2)
@@ -1291,7 +1307,8 @@ model JobOffer {
   createdByEmployee  Employee                     @relation("JobOfferCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee?                    @relation("JobOfferModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
-  applications RecruitmentApplication[]
+  applications  RecruitmentApplication[]
+  distributions JobOfferDistribution[]
 
   @@index([HiringRequestId])
   @@index([InterviewEvaluationTemplateId])
@@ -1397,17 +1414,24 @@ model ApplicationNote {
 /// Cancelled. A la planification, des invitations calendrier (.ics) sont
 /// envoyees automatiquement aux participants et au candidat (US13-14).
 model Interview {
-  Id            String   @id @default(uuid()) @db.UniqueIdentifier
-  ReferenceCode String   @unique @db.NVarChar(20)
-  ApplicationId String   @db.UniqueIdentifier
-  ScheduledAt   DateTime @db.DateTime2
+  Id                  String    @id @default(uuid()) @db.UniqueIdentifier
+  ReferenceCode       String    @unique @db.NVarChar(20)
+  ApplicationId       String    @db.UniqueIdentifier
+  ScheduledAt         DateTime  @db.DateTime2
   // Mode: InPerson | VideoCall
-  Mode          String   @db.NVarChar(20)
+  Mode                String    @db.NVarChar(20)
   // L'un ou l'autre selon Mode, jamais les deux.
-  Location      String?  @db.NVarChar(255)
-  MeetingLink   String?  @db.NVarChar(500)
+  Location            String?   @db.NVarChar(255)
+  MeetingLink         String?   @db.NVarChar(500)
   // Status: Scheduled | Done | Cancelled
-  Status        String   @default("Scheduled") @db.NVarChar(20)
+  Status              String    @default("Scheduled") @db.NVarChar(20)
+  // Reponse du candidat a l'invitation calendrier (backlog "Suivi des reponses").
+  // CandidateRsvp: Pending | Accepted | Declined | Tentative
+  CandidateRsvp       String    @default("Pending") @db.NVarChar(20)
+  CandidateRsvpToken  String?   @db.NVarChar(64)
+  CandidateRsvpAt     DateTime? @db.DateTime2
+  // CandidateRsvpSource: Link | Manual | IcsReply
+  CandidateRsvpSource String?   @db.NVarChar(20)
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -1426,23 +1450,32 @@ model Interview {
 
   @@index([ApplicationId])
   @@index([Status])
+  @@index([CandidateRsvpToken])
 }
 
 /// Participant a un entretien. EmployeeId renseigne = choisi via l'annuaire
 /// (permet de retrouver son email pour l'invitation calendrier) ; sinon
 /// Name/Email saisis a la main.
 model InterviewParticipant {
-  Id          String  @id @default(uuid()) @db.UniqueIdentifier
-  InterviewId String  @db.UniqueIdentifier
-  EmployeeId  String? @db.UniqueIdentifier
-  Name        String  @db.NVarChar(150)
-  Email       String? @db.NVarChar(150)
+  Id          String    @id @default(uuid()) @db.UniqueIdentifier
+  InterviewId String    @db.UniqueIdentifier
+  EmployeeId  String?   @db.UniqueIdentifier
+  Name        String    @db.NVarChar(150)
+  Email       String?   @db.NVarChar(150)
+  // Reponse a l'invitation calendrier (backlog "Suivi des reponses").
+  // Rsvp: Pending | Accepted | Declined | Tentative
+  Rsvp        String    @default("Pending") @db.NVarChar(20)
+  RsvpToken   String?   @db.NVarChar(64)
+  RsvpAt      DateTime? @db.DateTime2
+  // RsvpSource: Link | Manual | IcsReply
+  RsvpSource  String?   @db.NVarChar(20)
 
   interview Interview @relation(fields: [InterviewId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   employee  Employee? @relation("InterviewParticipantEmployee", fields: [EmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([InterviewId])
   @@index([EmployeeId])
+  @@index([RsvpToken])
 }
 
 /// Evaluation d'un entretien (1 par entretien). Score global = moyenne des
@@ -1492,10 +1525,12 @@ model RecruitmentContract {
   // Status: Draft | Sent | Negotiating | Accepted | Refused | Cancelled
   Status                 String    @default("Draft") @db.NVarChar(20)
   RejectionReason        String?   @db.NVarChar(500)
-  // Simulation : ne cree aucun vrai compte dans le module Employes (voir
-  // BACKLOG "Conversion candidat -> employe"). Sert a visualiser le point
-  // d'entree avec le client.
+  // Passe a true quand un vrai compte Employe a ete cree a partir de ce
+  // contrat accepte (backlog "Conversion candidat -> employe" / "Inclusion
+  // d'un Potentiel"). Voir CreatedEmployeeId.
   EmployeeProfileCreated Boolean   @default(false)
+  // Employe reel cree a partir de ce contrat (null tant que non converti).
+  CreatedEmployeeId      String?   @db.UniqueIdentifier
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -1509,6 +1544,7 @@ model RecruitmentContract {
   template           ContractTemplate?      @relation(fields: [TemplateId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   createdByEmployee  Employee               @relation("RecruitmentContractCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee?              @relation("RecruitmentContractModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdEmployee    Employee?              @relation("RecruitmentContractCreatedEmployee", fields: [CreatedEmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   negotiationRounds ContractNegotiationRound[]
   trialEmployee     TrialEmployee?
@@ -1516,6 +1552,7 @@ model RecruitmentContract {
   @@index([TemplateId])
   @@index([Status])
   @@index([CreatedBy])
+  @@index([CreatedEmployeeId])
 }
 
 /// Un aller-retour de negociation salariale sur une proposition d'embauche.
@@ -1562,20 +1599,23 @@ model ContractTemplate {
 /// est acceptee (TrialEndDate = StartDate + 2 mois). OnTrial -> Extended* ->
 /// Converted (confirme) | Cancelled.
 model TrialEmployee {
-  Id            String    @id @default(uuid()) @db.UniqueIdentifier
-  ReferenceCode String    @unique @db.NVarChar(20)
-  ContractId    String    @unique @db.UniqueIdentifier
-  EmployeeName  String    @db.NVarChar(150)
-  JobTitle      String    @db.NVarChar(150)
-  EntityName    String    @db.NVarChar(150)
-  StartDate     DateTime  @db.Date
-  TrialEndDate  DateTime  @db.Date
+  Id                String    @id @default(uuid()) @db.UniqueIdentifier
+  ReferenceCode     String    @unique @db.NVarChar(20)
+  ContractId        String    @unique @db.UniqueIdentifier
+  EmployeeName      String    @db.NVarChar(150)
+  JobTitle          String    @db.NVarChar(150)
+  EntityName        String    @db.NVarChar(150)
+  StartDate         DateTime  @db.Date
+  TrialEndDate      DateTime  @db.Date
   // Status: OnTrial | Extended | Converted | Cancelled
-  Status        String    @default("OnTrial") @db.NVarChar(20)
-  EvalScore     Int?
-  EvalComment   String?   @db.NVarChar(Max)
-  EvalByName    String?   @db.NVarChar(150)
-  EvalAt        DateTime? @db.DateTime2
+  Status            String    @default("OnTrial") @db.NVarChar(20)
+  EvalScore         Int?
+  EvalComment       String?   @db.NVarChar(Max)
+  EvalByName        String?   @db.NVarChar(150)
+  EvalAt            DateTime? @db.DateTime2
+  // Employe reel cree a partir de ce parcours (backlog "Conversion candidat
+  // -> employe") — renseigne a la conversion du contrat ou a la confirmation.
+  CreatedEmployeeId String?   @db.UniqueIdentifier
 
   CreatedBy  String    @db.UniqueIdentifier
   CreatedAt  DateTime  @default(now()) @db.DateTime2
@@ -1588,9 +1628,11 @@ model TrialEmployee {
   contract           RecruitmentContract @relation(fields: [ContractId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   createdByEmployee  Employee            @relation("TrialEmployeeCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
   modifiedByEmployee Employee?           @relation("TrialEmployeeModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdEmployee    Employee?           @relation("TrialEmployeeCreatedEmployee", fields: [CreatedEmployeeId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([Status])
   @@index([CreatedBy])
+  @@index([CreatedEmployeeId])
 }
 
 /// Vivier de talents / CVtheque. Tags stockes en une chaine separee par des
@@ -1640,4 +1682,113 @@ model TalentPoolEvaluation {
   entry TalentPoolEntry @relation(fields: [TalentPoolEntryId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([TalentPoolEntryId])
+}
+
+// -------------------------------------------------------------------------
+// DIFFUSION MULTI-PLATEFORMES DES OFFRES (backlog "Diffusion des offres")
+//
+// Pas d'API tierce (LinkedIn/jobboards demandent des accords partenaires) :
+// solution auto-hebergee — flux publics tirables (feed.json / feed.xml),
+// webhooks sortants (relais Zapier/Make/n8n), contenu pret-a-coller, et
+// suivi manuel de la diffusion.
+// -------------------------------------------------------------------------
+
+/// Canal de diffusion externe d'une offre. Webhook = relais Zapier/Make/n8n
+/// vers LinkedIn & co ; Email = liste interne / cabinet ; RssOnly/Manual =
+/// suivi manuel (le RH colle l'URL de l'annonce apres publication).
+model DistributionChannel {
+  Id          String  @id @default(uuid()) @db.UniqueIdentifier
+  Name        String  @db.NVarChar(120)
+  // Kind: Webhook | RssOnly | Manual | Email
+  Kind        String  @db.NVarChar(20)
+  // URL cible d'un canal Webhook (endpoint Zapier / Make / n8n). NULL sinon.
+  TargetUrl   String? @db.NVarChar(500)
+  // Destinataire d'un canal Email (liste interne / cabinet). NULL sinon.
+  TargetEmail String? @db.NVarChar(150)
+  // Secret partage : le corps du webhook est signe en HMAC-SHA256 dans
+  // l'entete X-Productive247-Signature. Stocke en clair (necessaire pour
+  // signer), jamais renvoye par l'API (hasSecret seul).
+  Secret      String? @db.NVarChar(200)
+  IsActive    Boolean @default(true)
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+  IsDeleted  Boolean   @default(false)
+  DeletedBy  String?   @db.UniqueIdentifier
+  DeletedAt  DateTime? @db.DateTime2
+
+  createdByEmployee  Employee  @relation("DistributionChannelCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee? @relation("DistributionChannelModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  deliveries JobOfferDistribution[]
+
+  @@index([Kind])
+  @@index([IsActive])
+  @@index([CreatedBy])
+}
+
+/// Trace d'envoi d'une offre vers un canal (1 ligne par couple offre/canal).
+model JobOfferDistribution {
+  Id              String    @id @default(uuid()) @db.UniqueIdentifier
+  JobOfferId      String    @db.UniqueIdentifier
+  ChannelId       String    @db.UniqueIdentifier
+  // Instantanes figes a la creation (le canal peut etre renomme/supprime).
+  ChannelName     String    @db.NVarChar(120)
+  ChannelKind     String    @db.NVarChar(20)
+  // Status: Pending | Sent | Failed | Posted | Skipped
+  Status          String    @default("Pending") @db.NVarChar(20)
+  // Trigger: Publish | Close | Manual
+  Trigger         String    @db.NVarChar(20)
+  // URL de l'annonce sur la plateforme cible (saisie RH ou extraite de la
+  // reponse du webhook).
+  ExternalUrl     String?   @db.NVarChar(500)
+  Attempts        Int       @default(0)
+  HttpStatus      Int?
+  ResponseSnippet String?   @db.NVarChar(500)
+  LastAttemptAt   DateTime? @db.DateTime2
+  PostedAt        DateTime? @db.DateTime2
+
+  CreatedBy  String    @db.UniqueIdentifier
+  CreatedAt  DateTime  @default(now()) @db.DateTime2
+  ModifiedBy String?   @db.UniqueIdentifier
+  ModifiedAt DateTime? @db.DateTime2
+
+  jobOffer           JobOffer            @relation(fields: [JobOfferId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  channel            DistributionChannel @relation(fields: [ChannelId], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  createdByEmployee  Employee            @relation("JobOfferDistributionCreatedBy", fields: [CreatedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedByEmployee Employee?           @relation("JobOfferDistributionModifiedBy", fields: [ModifiedBy], references: [Id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([JobOfferId, ChannelId])
+  @@index([JobOfferId])
+  @@index([ChannelId])
+  @@index([Status])
+  @@index([CreatedBy])
+}
+
+// =========================================================================
+// MODULE ADMINISTRATION - RAPPELS D'ECHEANCES (backlog "Rappels des echeances")
+// =========================================================================
+
+/// Journal d'envoi des rappels d'echeance (anti-doublon du cron quotidien).
+/// Pas de FK ni de bloc d'audit : log interne, non expose a l'UI, purge
+/// physiquement au bout de 180 jours.
+model ReminderDispatchLog {
+  Id                  String   @id @default(uuid()) @db.UniqueIdentifier
+  // sha256("categorie|entityType|entityId|dateEcheance|palier|destinataire")
+  DedupKey            String   @unique @db.NVarChar(64)
+  // Category: cdd_end | internship_end | birthday | trial_end | contract_end
+  Category            String   @db.NVarChar(30)
+  // EntityType: Employee | TrialEmployee | RecruitmentContract
+  EntityType          String   @db.NVarChar(30)
+  EntityId            String   @db.UniqueIdentifier
+  DueDate             DateTime @db.Date
+  // LeadBucket: 30 | 14 | 7 | 1
+  LeadBucket          Int
+  RecipientEmployeeId String   @db.UniqueIdentifier
+  CreatedAt           DateTime @default(now()) @db.DateTime2
+
+  @@index([RecipientEmployeeId])
+  @@index([DueDate])
 }

@@ -1,8 +1,10 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { TrialService } from './trial.service';
 import { EvaluateTrialDto, ExtendTrialDto } from './dto/trial.dto';
+import { ConfirmTrialDto } from '../contract/dto/convert-to-employee.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { CurrentPermissions } from '../../../common/decorators/current-permissions.decorator';
 
 @Controller('recruitment/trial-employees')
 @RequirePermission('RECRUTEMENT_ACCES')
@@ -38,8 +40,13 @@ export class TrialController {
   }
 
   @Post(':id/convert')
-  convert(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
-    return this.service.convert(id, employeeId);
+  convert(
+    @Param('id') id: string,
+    @Body() dto: ConfirmTrialDto,
+    @CurrentUser('employeeId') employeeId: string,
+    @CurrentPermissions() permissions: Set<string>,
+  ) {
+    return this.service.convert(id, employeeId, dto, permissions);
   }
 
   @Post(':id/cancel')

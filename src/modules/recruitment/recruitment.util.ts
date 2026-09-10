@@ -1,4 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
 
 // Code de reference lisible : PREFIX-ANNEE-00001. `countWithPrefix` compte
 // les lignes deja existantes pour l'annee en cours (meme approche que les
@@ -11,6 +12,34 @@ export async function nextReferenceCode(
   const p = `${prefix}-${year}-`;
   const count = await countWithPrefix(p);
   return `${p}${String(count + 1).padStart(5, '0')}`;
+}
+
+// nextReferenceCode est base sur un count() : deux creations concurrentes
+// peuvent generer le meme code (@unique -> P2002). Ce helper rejoue une fois
+// l'operation avec un code regenere avant de laisser remonter le conflit.
+export async function withReferenceCodeRetry<T>(
+  build: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await build();
+  } catch (err: unknown) {
+    const code = (err as { code?: string })?.code;
+    if (code === 'P2002') {
+      return build();
+    }
+    throw err;
+  }
+}
+
+// Auteur (CreatedBy, FK NOT NULL) des lignes creees depuis le portail public
+// (candidature, piece jointe...) : le compte systeme de l'amorçage si
+// present, sinon n'importe quel employe. Un seul point d'implementation
+// partage entre RecruitmentPublicService et RecruitmentAttachmentService.
+export async function resolvePortalAuthorId(prisma: PrismaService): Promise<string> {
+  const system = await prisma.employee.findFirst({ where: { IsSystem: true }, select: { Id: true } });
+  if (system) return system.Id;
+  const any = await prisma.employee.findFirstOrThrow({ select: { Id: true } });
+  return any.Id;
 }
 
 // Tags du vivier : stockes en une chaine "a, b, c", exposes en tableau.
