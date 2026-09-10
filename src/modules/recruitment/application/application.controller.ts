@@ -80,6 +80,12 @@ export class ApplicationController {
 export class MyApplicationsController {
   constructor(private readonly service: ApplicationService) {}
 
+  // Doit rester avant ':id'.
+  @Get('offers')
+  publishedOffers() {
+    return this.service.listPublishedOffersLite();
+  }
+
   @Get()
   findMine(@CurrentUser('employeeId') employeeId: string) {
     return this.service.findMineInternal(employeeId);
@@ -88,5 +94,10 @@ export class MyApplicationsController {
   @Post()
   selfApply(@Body() dto: SelfApplyDto, @CurrentUser('employeeId') employeeId: string) {
     return this.service.selfApply(dto.JobOfferId, employeeId);
+  }
+
+  @Delete(':id')
+  withdraw(@Param('id') id: string, @CurrentUser('employeeId') employeeId: string) {
+    return this.service.withdrawOwn(id, employeeId);
   }
 }

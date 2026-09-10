@@ -150,6 +150,46 @@ export class ApplicationService {
     });
   }
 
+  // Offres publiees vues par un employe pour postuler en interne (US12) —
+  // aucune permission recrutement requise, donc version allegee.
+  listPublishedOffersLite() {
+    return this.prisma.jobOffer.findMany({
+      where: { Status: 'Published', IsDeleted: false },
+      select: {
+        Id: true,
+        ReferenceCode: true,
+        Title: true,
+        EntityName: true,
+        ContractType: true,
+        Location: true,
+        Description: true,
+      },
+      orderBy: { PublishedAt: 'desc' },
+    });
+  }
+
+  // Desistement d'une candidature interne par l'employe lui-meme (US12).
+  async withdrawOwn(id: string, employeeId: string) {
+    const app = await this.findRaw(id);
+    if (app.EmployeeId !== employeeId || app.Source !== 'Internal') {
+      throw new NotFoundException(`Candidature ${id} introuvable`);
+    }
+    if (!['New', 'InReview', 'InterviewScheduled'].includes(app.Status)) {
+      throw new BadRequestException('Cette candidature ne peut plus etre retiree');
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.applicationNote.create({
+        data: { ApplicationId: id, AuthorName: app.CandidateName, Text: 'Candidat desiste de sa candidature interne.' },
+      });
+      await tx.recruitmentApplication.update({
+        where: { Id: id },
+        data: { Status: 'Rejected', ModifiedBy: employeeId, ModifiedAt: new Date() },
+      });
+    });
+    this.notify.broadcast();
+    return { ok: true };
+  }
+
   async update(id: string, dto: UpdateApplicationDto, employeeId: string) {
     const existing = await this.findRaw(id);
     if (!APPLICATION_EDITABLE_STATUSES.includes(existing.Status)) {
