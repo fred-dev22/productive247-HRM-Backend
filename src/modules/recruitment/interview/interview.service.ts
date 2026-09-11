@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '../../../../prisma/generated/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { RecruitmentNotifyService } from '../recruitment-notify.service';
 import { REFERENCE_PREFIXES } from '../recruitment.constants';
@@ -323,12 +324,34 @@ export class InterviewService {
     if (existing.Status === 'Cancelled') {
       throw new BadRequestException('Un entretien annule ne peut pas etre marque comme realise');
     }
-    await this.prisma.interview.update({
-      where: { Id: id },
-      data: { Status: 'Done', ModifiedBy: employeeId, ModifiedAt: new Date() },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.interview.update({
+        where: { Id: id },
+        data: { Status: 'Done', ModifiedBy: employeeId, ModifiedAt: new Date() },
+      });
+      await this.advanceApplicationAfterInterview(tx, existing.ApplicationId, employeeId);
     });
     this.notify.broadcast();
     return this.findOne(id);
+  }
+
+  // Effet croise symetrique de schedule() (candidature -> "Entretien
+  // planifie" des la planification, voir plus haut) : une fois l'entretien
+  // realise (marque fait OU evalue, les deux amenent Status: 'Done'), la
+  // candidature ne doit plus rester bloquee sur "Entretien planifie" — elle
+  // repasse "En cours" pour signaler qu'une decision RH est attendue (aucun
+  // circuit automatique au-dela, decision client du 05/09). updateMany avec
+  // le filtre de statut en clause WHERE : si le RH a deja avance la
+  // candidature entre-temps (Retenue/Refuse/En cours), on ne l'ecrase pas.
+  private async advanceApplicationAfterInterview(
+    tx: Prisma.TransactionClient,
+    applicationId: string,
+    employeeId: string,
+  ): Promise<void> {
+    await tx.recruitmentApplication.updateMany({
+      where: { Id: applicationId, Status: 'InterviewScheduled' },
+      data: { Status: 'InReview', ModifiedBy: employeeId, ModifiedAt: new Date() },
+    });
   }
 
   async evaluate(id: string, dto: EvaluateInterviewDto, employeeId: string) {
@@ -380,6 +403,7 @@ export class InterviewService {
         where: { Id: id },
         data: { Status: 'Done', ModifiedBy: employeeId, ModifiedAt: new Date() },
       });
+      await this.advanceApplicationAfterInterview(tx, existing.ApplicationId, employeeId);
     });
     this.notify.broadcast();
     return this.findOne(id);

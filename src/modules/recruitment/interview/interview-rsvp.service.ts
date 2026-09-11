@@ -186,7 +186,12 @@ export class InterviewRsvpService {
       resolved.scope === 'participant'
         ? itv.participants.find((row) => row.Id === resolved.participantId)?.Name ?? 'Un participant'
         : itv.application?.CandidateName ?? 'Le candidat';
-    this.afterWrite(itv, `${who} ${this.verbFr(dbValue)} l'entretien ${itv.ReferenceCode}`);
+    const jobTitle = itv.application?.JobOfferTitle ?? 'Poste';
+    const when = this.formatInterviewDate(itv.ScheduledAt);
+    this.afterWrite(
+      itv,
+      `${who} ${this.verbFr(dbValue)} l'entretien du ${when} pour le poste "${jobTitle}"`,
+    );
 
     return { status: 'recorded', response };
   }
@@ -318,6 +323,18 @@ export class InterviewRsvpService {
       if (rawKey === upper) return line.slice(idx + 1).trim();
     }
     return null;
+  }
+
+  // Date + heure lisibles pour le message de notification (jamais relatif
+  // "demain"/"hier" ici : le RH peut lire cette notification des jours plus
+  // tard, une date relative deviendrait fausse a ce moment-la).
+  private formatInterviewDate(d: Date): string {
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${dd}/${mm}/${yyyy} a ${hh}h${min}`;
   }
 
   private verbFr(value: 'Accepted' | 'Declined' | 'Tentative'): string {
