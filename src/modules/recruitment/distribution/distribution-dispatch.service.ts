@@ -125,6 +125,12 @@ export class DistributionDispatchService {
     try {
       const offer = await this.prisma.jobOffer.findUnique({ where: { Id: offerId } });
       if (!offer || offer.IsDeleted) return;
+      // Offre exclue des flux publics (poste confidentiel) : ne pousse vers
+      // aucun canal (webhook/email) non plus, comme annonce par la case a
+      // cocher cote front ("... ni les webhooks"). Sans ce garde-fou, seul
+      // feed.json/feed.xml respectait l'exclusion (voir JobFeedService) et
+      // l'offre partait quand meme vers les webhooks actifs.
+      if (offer.ExcludeFromFeed) return;
       const channels = await this.prisma.distributionChannel.findMany({
         where: { IsActive: true, IsDeleted: false },
       });
