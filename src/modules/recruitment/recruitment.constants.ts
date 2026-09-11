@@ -3,15 +3,18 @@
 // courts, et il n'y a pas d'etape "approuver / refuser" sur une offre ni
 // une expression de besoin.
 
-// ── Prefixes des codes de reference (RB-2026-00001, OF-2026-00001, ...) ──
+// ── Prefixes des codes de reference (BES001, OFF001, ...) — meme convention
+// courte que le matricule employe (EmployeeService.generateEmployeeNumber ->
+// EMP001), demande client du 11/09 ("ça doit être parlant comme pour le
+// module administration"). Remplace l'ancien format PREFIX-ANNEE-00001.
 export const REFERENCE_PREFIXES = {
-  hiringRequest: 'RB', // expRession de Besoin
-  jobOffer: 'OF', // OFfre
-  application: 'CD', // CanDidature
-  interview: 'EN', // ENtretien
-  contract: 'CT', // ConTrat
-  trial: 'PE', // Periode d'Essai
-  talentPool: 'VT', // Vivier de Talents
+  hiringRequest: 'BES', // BESoin
+  jobOffer: 'OFF', // OFFre
+  application: 'CAN', // CANdidature
+  interview: 'ENT', // ENTretien
+  contract: 'CTR', // ConTRat
+  trial: 'ESS', // ESSai (periode d'essai)
+  talentPool: 'VIV', // VIVier de talents
 } as const;
 
 // ── Jeux de statuts ─────────────────────────────────────────────────────

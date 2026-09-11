@@ -1,17 +1,18 @@
 import { ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
-// Code de reference lisible : PREFIX-ANNEE-00001. `countWithPrefix` compte
-// les lignes deja existantes pour l'annee en cours (meme approche que les
-// autres modules, voir ExpenseReportService.generateReferenceCode).
+// Code de reference court et lisible : PREFIX + sequence sur 3 chiffres
+// (ex: OFF001, CAN001...) — meme convention que le matricule employe
+// (EmployeeService.generateEmployeeNumber -> EMP001, module Administration).
+// Remplace l'ancien format PREFIX-ANNEE-00001 (demande client du 11/09).
+// `countWithPrefix` compte les lignes deja existantes pour ce prefixe
+// (jamais remis a zero par annee, comme EMP).
 export async function nextReferenceCode(
   prefix: string,
   countWithPrefix: (startsWith: string) => Promise<number>,
 ): Promise<string> {
-  const year = new Date().getFullYear();
-  const p = `${prefix}-${year}-`;
-  const count = await countWithPrefix(p);
-  return `${p}${String(count + 1).padStart(5, '0')}`;
+  const count = await countWithPrefix(prefix);
+  return `${prefix}${String(count + 1).padStart(3, '0')}`;
 }
 
 // nextReferenceCode est base sur un count() : deux creations concurrentes
