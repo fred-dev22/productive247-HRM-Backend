@@ -64,6 +64,11 @@ export interface WorkflowContext {
   // final). Calculee par chaque service metier dans son toContext().
   summary: string;
   details?: EmailDetailRow[];
+  // Uniquement pour 'leave' (voir LeaveRequestService::toContext), permet
+  // de notifier l'intérimaire désigné à la soumission (retour client du
+  // 23/09 : avant, il n'était jamais informé qu'on lui avait confié un
+  // intérim, ni par email ni in-app).
+  interimEmployeeId?: string;
 }
 
 // Point d'entree unique pour les notifications in-app + email declenchees
@@ -166,6 +171,26 @@ export class WorkflowNotifierService {
           accent: 'primary', chipLabel: 'À valider', title, bodyLines: [message], details: ctx.details,
           actionButtons: this.approvalActionButtons(token),
         }),
+      }),
+      this.notifyInterim(ctx, beneficiary.name),
+    ]);
+  }
+
+  // Informe l'intérimaire désigné, à la soumission : il n'était jusqu'ici
+  // jamais notifié (ni in-app ni email), retour client du 23/09. Silencieux
+  // si aucun intérimaire n'est désigné, ou pour les workflows autres que
+  // 'leave' (interimEmployeeId n'est alors jamais renseigné).
+  private async notifyInterim(ctx: WorkflowContext, beneficiaryName: string) {
+    if (!ctx.interimEmployeeId) return;
+    const interim = await this.resolvePerson(ctx.interimEmployeeId);
+    const title = 'Intérim demandé';
+    const message = `${beneficiaryName} vous a désigné comme intérimaire pendant son absence (${ctx.summary}).`;
+    await Promise.all([
+      this.notifyPeople([interim], { type: ctx.kind, title, message, href: hrefMine(ctx) }),
+      this.mail.send({
+        to: interim.email,
+        subject: title,
+        html: renderEmailHtml({ accent: 'primary', chipLabel: 'Intérim', title, bodyLines: [message], details: ctx.details }),
       }),
     ]);
   }
