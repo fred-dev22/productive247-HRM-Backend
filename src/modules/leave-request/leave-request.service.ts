@@ -74,8 +74,16 @@ export class LeaveRequestService {
     StartDate: Date;
     EndDate: Date;
     DaysCount: unknown;
-    leaveType?: { Name: string } | null;
+    InterimEmployeeId?: string | null;
+    leaveType?: { Name: string; DocumentRequired?: boolean } | null;
+    interimEmployee?: { FullName: string } | null;
   }): WorkflowContext {
+    // Retour client du 23/09 : l'intérimaire et le justificatif requis
+    // n'apparaissaient jamais dans l'email de notification envoyé au
+    // validateur, ajoutés ici plutôt que dans le corps du message pour
+    // rester dans le même format "détails" que le reste. interimEmployeeId
+    // permet en plus à notifySubmitted (WorkflowNotifierService) de
+    // notifier l'intérimaire lui-même, ce qu'il ne faisait jamais avant.
     return {
       kind: 'leave',
       id: lr.Id,
@@ -83,11 +91,14 @@ export class LeaveRequestService {
       beneficiaryId: lr.EmployeeId,
       creatorId: lr.CreatedBy,
       summary: lr.leaveType?.Name ?? 'congé',
+      interimEmployeeId: lr.InterimEmployeeId ?? undefined,
       details: [
         { label: 'Type de congé', value: lr.leaveType?.Name ?? '-' },
         { label: 'Du', value: formatDateFr(lr.StartDate) },
         { label: 'Au', value: formatDateFr(lr.EndDate) },
         { label: 'Durée', value: `${Number(lr.DaysCount)} jour(s)` },
+        { label: 'Intérimaire', value: lr.interimEmployee?.FullName ?? 'Aucun' },
+        { label: 'Justificatif', value: lr.leaveType?.DocumentRequired ? 'Requis' : 'Non requis' },
       ],
     };
   }
@@ -192,11 +203,16 @@ export class LeaveRequestService {
       a.getDate() === b.getDate();
 
     // Vrai si `date` est une absence complete au sens de la demande — seuls
-    // StartDate/EndDate peuvent porter une demi-journee (StartPeriod/
-    // EndPeriod != 'full'), tout jour strictement entre les deux est
-    // forcement une absence complete.
+    // StartDate/EndDate peuvent porter une demi-journee, tout jour
+    // strictement entre les deux est forcement une absence complete. Retour
+    // client du 23/09 : au debut, "Matin" (StartPeriod='am') compte
+    // desormais la journee entiere (comme l'ancien "Journee entiere",
+    // retire des choix cote frontend), seul "Apres-midi" ampute cette
+    // premiere journee, d'ou l'asymetrie avec la fin, ou tout ce qui n'est
+    // pas 'full' reste une demi-journee. Miroir exact du frontend
+    // (utils/calendar.ts::isFullyAbsentDay).
     const isFullyAbsent = (date: Date): boolean => {
-      if (sameDay(date, startDate) && startPeriod !== 'full') return false;
+      if (sameDay(date, startDate) && startPeriod === 'pm') return false;
       if (sameDay(date, endDate) && endPeriod !== 'full') return false;
       return true;
     };
@@ -590,10 +606,11 @@ export class LeaveRequestService {
   private async findOneRaw(id: string) {
     // include leaveType : sans ça toContext() (emails/notifications) ne
     // peut jamais afficher le type de congé, il retombe systematiquement
-    // sur le fallback '—'.
+    // sur le fallback '-'. interimEmployee : idem pour son nom, retour
+    // client du 23/09 (toContext() l'affiche desormais aussi).
     const leaveRequest = await this.prisma.leaveRequest.findUnique({
       where: { Id: id },
-      include: { leaveType: true },
+      include: { leaveType: true, interimEmployee: { select: { FullName: true } } },
     });
     if (!leaveRequest || leaveRequest.IsDeleted) {
       throw new NotFoundException(`Demande de congé ${id} introuvable`);
