@@ -66,24 +66,37 @@ export class LeaveRequestService {
 
   // ── Helpers ──────────────────────────────────────────────────────────
 
-  private toContext(lr: {
+  private async toContext(lr: {
     Id: string;
     ReferenceCode: string;
     EmployeeId: string;
     CreatedBy: string;
+    LeaveTypeId: string;
     StartDate: Date;
     EndDate: Date;
     DaysCount: unknown;
     InterimEmployeeId?: string | null;
-    leaveType?: { Name: string; DocumentRequired?: boolean } | null;
+    leaveType?: { Name: string; DocumentRequired?: boolean; DaysPerYear?: unknown } | null;
     interimEmployee?: { FullName: string } | null;
-  }): WorkflowContext {
+  }): Promise<WorkflowContext> {
     // Retour client du 23/09 : l'intérimaire et le justificatif requis
     // n'apparaissaient jamais dans l'email de notification envoyé au
     // validateur, ajoutés ici plutôt que dans le corps du message pour
     // rester dans le même format "détails" que le reste. interimEmployeeId
     // permet en plus à notifySubmitted (WorkflowNotifierService) de
     // notifier l'intérimaire lui-même, ce qu'il ne faisait jamais avant.
+    // Solde (retour client du 23/09, 2e passage) : demandé dans l'email de
+    // demande au manager ET dans les emails de confirmation à l'employé
+    // (approuvée/refusée/...) : comme les deux partagent ce même details[],
+    // l'ajouter ici couvre les deux d'un coup. C'est le solde ACTUEL de
+    // l'employé pour ce type (pas encore décompté de cette demande tant
+    // qu'elle n'est pas approuvée, voir adjustBalance), pour que le
+    // validateur puisse juger s'il y a assez de jours ; illimité (jours/an
+    // = 0) affiché à part plutôt qu'un solde qui ne veut rien dire.
+    const daysPerYear = Number(lr.leaveType?.DaysPerYear ?? 0);
+    const soldeValue = daysPerYear <= 0
+      ? 'Illimité'
+      : `${await this.leaveTransactionService.getBalance(lr.EmployeeId, lr.LeaveTypeId)} jour(s)`;
     return {
       kind: 'leave',
       id: lr.Id,
@@ -94,6 +107,7 @@ export class LeaveRequestService {
       interimEmployeeId: lr.InterimEmployeeId ?? undefined,
       details: [
         { label: 'Type de congé', value: lr.leaveType?.Name ?? '-' },
+        { label: 'Solde', value: soldeValue },
         { label: 'Du', value: formatDateFr(lr.StartDate) },
         { label: 'Au', value: formatDateFr(lr.EndDate) },
         { label: 'Durée', value: `${Number(lr.DaysCount)} jour(s)` },
@@ -941,7 +955,7 @@ export class LeaveRequestService {
         );
         return updated;
       });
-      await this.notifier.notifyApproved(this.toContext(leaveRequest), {
+      await this.notifier.notifyApproved(await this.toContext(leaveRequest), {
         autoApproved: true,
       });
       return updated;
@@ -976,7 +990,7 @@ export class LeaveRequestService {
       return updated;
     });
     await this.notifier.notifySubmitted(
-      this.toContext(leaveRequest),
+      await this.toContext(leaveRequest),
       directValidatorId,
       token,
     );
@@ -1091,7 +1105,7 @@ export class LeaveRequestService {
         );
         return updated;
       });
-      await this.notifier.notifyApproved(this.toContext(leaveRequest), {
+      await this.notifier.notifyApproved(await this.toContext(leaveRequest), {
         autoApproved: true,
       });
       return updated;
@@ -1127,7 +1141,7 @@ export class LeaveRequestService {
       return updated;
     });
     await this.notifier.notifySubmitted(
-      this.toContext(leaveRequest),
+      await this.toContext(leaveRequest),
       approverId,
       token,
     );
@@ -1290,12 +1304,12 @@ export class LeaveRequestService {
 
     if (result.nextApproverId) {
       await this.notifier.notifyProgressed(
-        this.toContext(existing),
+        await this.toContext(existing),
         result.nextApproverId,
         nextToken as string,
       );
     } else {
-      await this.notifier.notifyApproved(this.toContext(existing), {
+      await this.notifier.notifyApproved(await this.toContext(existing), {
         autoApproved: false,
       });
     }
@@ -1323,7 +1337,7 @@ export class LeaveRequestService {
       dto.Comment,
       approverEmployeeId,
     );
-    await this.notifier.notifyRejected(this.toContext(existing), dto.Comment);
+    await this.notifier.notifyRejected(await this.toContext(existing), dto.Comment);
     return updated;
   }
 
@@ -1348,7 +1362,7 @@ export class LeaveRequestService {
       dto.Comment,
       approverEmployeeId,
     );
-    await this.notifier.notifyReturned(this.toContext(existing), dto.Comment);
+    await this.notifier.notifyReturned(await this.toContext(existing), dto.Comment);
     return updated;
   }
 
@@ -1445,7 +1459,7 @@ export class LeaveRequestService {
       return updated;
     });
     await this.notifier.notifyCancelled(
-      this.toContext(existing),
+      await this.toContext(existing),
       requesterEmployeeId,
     );
     return updated;
@@ -1501,7 +1515,7 @@ export class LeaveRequestService {
       },
       include: LEAVE_REQUEST_INCLUDE,
     });
-    await this.notifier.notifyRegularized(this.toContext(existing));
+    await this.notifier.notifyRegularized(await this.toContext(existing));
     return updated;
   }
 }
