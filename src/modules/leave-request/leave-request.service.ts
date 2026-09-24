@@ -73,11 +73,14 @@ export class LeaveRequestService {
     CreatedBy: string;
     LeaveTypeId: string;
     StartDate: Date;
+    StartPeriod: string;
     EndDate: Date;
+    EndPeriod: string;
     DaysCount: unknown;
     InterimEmployeeId?: string | null;
     leaveType?: { Name: string; DocumentRequired?: boolean; DaysPerYear?: unknown } | null;
     interimEmployee?: { FullName: string } | null;
+    employee?: { OrganizationUnitId: string; EmployeeCategoryId: string | null } | null;
   }): Promise<WorkflowContext> {
     // Retour client du 23/09 : l'intérimaire et le justificatif requis
     // n'apparaissaient jamais dans l'email de notification envoyé au
@@ -97,6 +100,27 @@ export class LeaveRequestService {
     const soldeValue = daysPerYear <= 0
       ? 'Illimité'
       : `${await this.leaveTransactionService.getBalance(lr.EmployeeId, lr.LeaveTypeId)} jour(s)`;
+    // Retour client du 24/09 : "Matin"/"Après-midi" n'apparaissait jamais
+    // dans l'email (seule la date, sans la demi-journée), alors que c'est
+    // ce que l'employé a choisi dans le formulaire (voir "Début absence"
+    // dans AbsenceCreate.vue). Rien n'est ajouté pour "full", la journée
+    // entière n'a pas besoin d'être précisée.
+    const periodSuffix = (period: string) =>
+      period === 'am' ? ' (Matin)' : period === 'pm' ? ' (Après-midi)' : '';
+    // Reprise prevue (retour client du 24/09) : meme calcul que l'apercu du
+    // formulaire de creation (AbsenceCreate.vue), absent jusqu'ici de
+    // l'email. Necessite l'unite/categorie de l'employe pour resoudre le
+    // calendrier applicable ; silencieusement omis si non disponible
+    // (findOneRaw les inclut toujours, mais toContext reste appelable avec
+    // un objet plus restreint).
+    const resume = lr.employee
+      ? await this.computeResumeDate(
+          lr.EndDate,
+          lr.EndPeriod,
+          lr.employee.OrganizationUnitId,
+          lr.employee.EmployeeCategoryId,
+        )
+      : null;
     return {
       kind: 'leave',
       id: lr.Id,
@@ -108,9 +132,12 @@ export class LeaveRequestService {
       details: [
         { label: 'Type de congé', value: lr.leaveType?.Name ?? '-' },
         { label: 'Solde', value: soldeValue },
-        { label: 'Du', value: formatDateFr(lr.StartDate) },
-        { label: 'Au', value: formatDateFr(lr.EndDate) },
+        { label: 'Du', value: `${formatDateFr(lr.StartDate)}${periodSuffix(lr.StartPeriod)}` },
+        { label: 'Au', value: `${formatDateFr(lr.EndDate)}${periodSuffix(lr.EndPeriod)}` },
         { label: 'Durée', value: `${Number(lr.DaysCount)} jour(s)` },
+        ...(resume
+          ? [{ label: 'Reprise prévue', value: `${formatDateFr(resume.date)}${periodSuffix(resume.period)}` }]
+          : []),
         { label: 'Intérimaire', value: lr.interimEmployee?.FullName ?? 'Aucun' },
         { label: 'Justificatif', value: lr.leaveType?.DocumentRequired ? 'Requis' : 'Non requis' },
       ],
@@ -322,6 +349,70 @@ export class LeaveRequestService {
     }
 
     return count;
+  }
+
+  // Date/periode de reprise prevue (miroir de utils/calendar.ts::getResumeDate
+  // cote frontend, meme calcul que l'apercu affiche dans le formulaire de
+  // creation) : un dernier jour "am" (matinee seule consommee) rend
+  // l'apres-midi du meme jour si c'est un jour ouvre, tout le reste rend le
+  // prochain jour ouvre au complet. Calculee a la volee plutot que stockee,
+  // a partir d'EndDate/EndPeriod (retour client du 24/09) : absente de
+  // l'email envoye au manager/employe (seule la date de fin y figurait,
+  // sans indiquer si la reprise est le matin ou l'apres-midi).
+  private async computeResumeDate(
+    endDate: Date,
+    endPeriod: string,
+    organizationUnitId: string,
+    employeeCategoryId: string | null,
+  ): Promise<{ date: Date; period: 'am' | 'pm' }> {
+    const calendar = await this.resolveApplicableCalendar(employeeCategoryId);
+    if (!calendar) return { date: endDate, period: 'am' };
+
+    const holidays = await this.prisma.holiday.findMany();
+    const applicableUnitIds = new Set(
+      await this.collectAncestorUnitIds(organizationUnitId),
+    );
+
+    const isHoliday = (date: Date): boolean => {
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      return holidays.some((h) => {
+        if (
+          h.HolidayType === 'Local' &&
+          !(h.OrganizationUnitId && applicableUnitIds.has(h.OrganizationUnitId))
+        ) {
+          return false;
+        }
+        const hd = h.Date;
+        if (h.IsRecurring) {
+          return (
+            hd.getUTCMonth() + 1 === Number(mm) && hd.getUTCDate() === Number(dd)
+          );
+        }
+        return (
+          hd.getUTCFullYear() === date.getFullYear() &&
+          hd.getUTCMonth() === date.getMonth() &&
+          hd.getUTCDate() === date.getDate()
+        );
+      });
+    };
+
+    const isWorkingDay = (date: Date): boolean => {
+      const dayConfig = calendar.workDays.find(
+        (d) => d.DayOfWeek === DAY_KEYS[date.getDay()],
+      );
+      return !!dayConfig?.IsEnabled && !isHoliday(date);
+    };
+
+    if (endPeriod === 'am' && isWorkingDay(endDate)) {
+      return { date: endDate, period: 'pm' };
+    }
+    const resumeDay = new Date(endDate);
+    resumeDay.setDate(resumeDay.getDate() + 1);
+    while (!isWorkingDay(resumeDay)) {
+      resumeDay.setDate(resumeDay.getDate() + 1);
+    }
+    return { date: resumeDay, period: 'am' };
   }
 
   // Determine le validateur reel d'un membre de pool a une date donnee : le
@@ -624,7 +715,11 @@ export class LeaveRequestService {
     // client du 23/09 (toContext() l'affiche desormais aussi).
     const leaveRequest = await this.prisma.leaveRequest.findUnique({
       where: { Id: id },
-      include: { leaveType: true, interimEmployee: { select: { FullName: true } } },
+      include: {
+        leaveType: true,
+        interimEmployee: { select: { FullName: true } },
+        employee: { select: { OrganizationUnitId: true, EmployeeCategoryId: true } },
+      },
     });
     if (!leaveRequest || leaveRequest.IsDeleted) {
       throw new NotFoundException(`Demande de congé ${id} introuvable`);

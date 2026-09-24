@@ -1,14 +1,15 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-// Logo Galana embarque en base64 (evite toute dependance a une image
-// hebergee publiquement — Outlook/OWA en particulier bloque volontiers les
+// Logo Congélo embarque en base64 (evite toute dependance a une image
+// hebergee publiquement : Outlook/OWA en particulier bloque volontiers les
 // images externes par defaut, alors qu'une image inline (data URI) s'affiche
 // toujours). Fichier .txt a cote de ce module, copie automatiquement dans
-// dist/ par Nest (assets non-.ts).
-const GALANA_LOGO_BASE64 = readFileSync(join(__dirname, 'galana-logo-base64.txt'), 'utf-8').trim();
+// dist/ par Nest (assets non-.ts, voir nest-cli.json).
+const CONGELO_LOGO_BASE64 = readFileSync(join(__dirname, 'congelo-logo-base64.txt'), 'utf-8').trim();
 
-// Palette alignee sur src/assets/main.css du frontend (theme "Vert Galana").
+// Palette alignee sur src/assets/main.css du frontend (theme --congelo-*,
+// identite ex-Galana conservee telle quelle pour ce client).
 const COLORS = {
   primary: '#006b3c',
   primaryBg: '#e6f4ed',
@@ -48,6 +49,11 @@ export interface EmailActionButton {
 export interface EmailOptions {
   accent?: EmailAccent;
   chipLabel?: string;
+  // Sous-titre affiche dans l'en-tete, sous le nom "Congélo" (ex: "Demande
+  // d'absence", "Ordre de mission") : par domaine plutot que fixe, voir
+  // WorkflowNotifierService. Omis pour les emails hors workflow (compte,
+  // mot de passe), l'en-tete affiche alors juste "Congélo" seul.
+  headerLabel?: string;
   title: string;
   // Lignes de paragraphe — chacune rendue dans un <p> distinct, peut contenir
   // du HTML simple (<strong>, etc.).
@@ -126,7 +132,7 @@ function actionButtonsHtml(buttons?: EmailActionButton[]): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 8px;">${rows}</table>`;
 }
 
-// Gabarit HTML partage par tous les emails de l'app — en-tete vert Galana
+// Gabarit HTML partage par tous les emails de l'app : en-tete vert Congélo
 // avec logo, corps blanc, pied de page discret. Mise en page en tables +
 // styles inline uniquement (pas de <style>, pas de flexbox) pour un rendu
 // fiable sur Outlook desktop comme sur les webmails modernes.
@@ -151,11 +157,19 @@ export function renderEmailHtml(opts: EmailOptions): string {
                 <table role="presentation" cellpadding="0" cellspacing="0">
                   <tr>
                     <td style="padding-right:12px;">
-                      <img src="data:image/png;base64,${GALANA_LOGO_BASE64}" width="38" height="38" alt="Galana" style="display:block;border-radius:50%;" />
+                      <table role="presentation" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:10px;">
+                        <tr>
+                          <td style="width:38px;height:38px;text-align:center;vertical-align:middle;">
+                            <img src="data:image/png;base64,${CONGELO_LOGO_BASE64}" width="28" height="28" alt="Congélo" style="display:block;margin:5px;" />
+                          </td>
+                        </tr>
+                      </table>
                     </td>
                     <td>
-                      <span style="color:#ffffff;font-size:16px;font-weight:700;">Productive 247 <span style="font-weight:400;opacity:.85;">HRM</span></span><br/>
-                      <span style="color:#ffffff;font-size:11px;opacity:.8;">Galana</span>
+                      ${opts.headerLabel
+                        ? `<span style="color:#ffffff;font-size:16px;font-weight:700;">${opts.headerLabel}</span><br/>
+                      <span style="color:#ffffff;font-size:11px;opacity:.8;">Congélo</span>`
+                        : `<span style="color:#ffffff;font-size:16px;font-weight:700;">Congélo</span>`}
                     </td>
                   </tr>
                 </table>
@@ -173,7 +187,7 @@ export function renderEmailHtml(opts: EmailOptions): string {
             </tr>
             <tr>
               <td style="padding:16px 28px 22px;border-top:1px solid ${COLORS.border};margin-top:8px;">
-                <p style="margin:0;font-size:11px;color:${COLORS.muted};">Productive 247 HRM - Galana. Cet email est généré automatiquement, merci de ne pas y répondre directement.</p>
+                <p style="margin:0;font-size:11px;color:${COLORS.muted};">Congélo. Cet email est généré automatiquement, merci de ne pas y répondre directement.</p>
               </td>
             </tr>
           </table>
