@@ -13,6 +13,15 @@ const KIND_LABEL: Record<WorkflowKind, string> = {
   expense: 'La note de frais',
 };
 
+// Sous-titre affiche dans l'en-tete des emails, sous "Congélo" (retour
+// client du 23/09 : l'en-tete affichait jusque-la "Productive 247 HRM",
+// jamais rebrande pour ce client).
+const KIND_HEADER_LABEL: Record<WorkflowKind, string> = {
+  leave: "Demande d'absence",
+  mission: 'Ordre de mission',
+  expense: 'Note de frais',
+};
+
 // Ecran "mes demandes" correspondant, cote employe — le meme pour l'espace
 // RH et l'espace employe (voir router.ts, ROUTE_PERMISSIONS n'en fait pas
 // une route distincte par espace). `?open=<id>` : la liste ouvre directement
@@ -122,6 +131,7 @@ export class WorkflowNotifierService {
     const html = renderEmailHtml({
       accent: input.accent,
       chipLabel: input.chipLabel,
+      headerLabel: KIND_HEADER_LABEL[input.ctx.kind],
       title: input.subject,
       bodyLines: [input.message],
       details: input.ctx.details,
@@ -168,7 +178,7 @@ export class WorkflowNotifierService {
         to: approver.email,
         subject: title,
         html: renderEmailHtml({
-          accent: 'primary', chipLabel: 'À valider', title, bodyLines: [message], details: ctx.details,
+          accent: 'primary', chipLabel: 'À valider', headerLabel: KIND_HEADER_LABEL[ctx.kind], title, bodyLines: [message], details: ctx.details,
           actionButtons: this.approvalActionButtons(token),
         }),
       }),
@@ -190,7 +200,7 @@ export class WorkflowNotifierService {
       this.mail.send({
         to: interim.email,
         subject: title,
-        html: renderEmailHtml({ accent: 'primary', chipLabel: 'Intérim', title, bodyLines: [message], details: ctx.details }),
+        html: renderEmailHtml({ accent: 'primary', chipLabel: 'Intérim', headerLabel: KIND_HEADER_LABEL[ctx.kind], title, bodyLines: [message], details: ctx.details }),
       }),
     ]);
   }
@@ -214,7 +224,7 @@ export class WorkflowNotifierService {
         to: nextApprover.email,
         subject: title,
         html: renderEmailHtml({
-          accent: 'primary', chipLabel: 'À valider', title, bodyLines: [message], details: ctx.details,
+          accent: 'primary', chipLabel: 'À valider', headerLabel: KIND_HEADER_LABEL[ctx.kind], title, bodyLines: [message], details: ctx.details,
           actionButtons: this.approvalActionButtons(token),
         }),
       }),
