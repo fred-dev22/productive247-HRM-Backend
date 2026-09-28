@@ -41,6 +41,7 @@ const OVERLAPPING_STATUSES = [
   'Done',
 ];
 
+const IN_APPROVAL_STATUSES = ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'];
 const EDITABLE_STATUSES = ['Draft', 'Returned'];
 
 // Applique a chaque create/update mutant une demande — sans ça la reponse
@@ -927,7 +928,9 @@ export class LeaveRequestService {
       where: {
         EntityType: 'LeaveRequest',
         ValidatedByEmployeeId: employeeId,
-        Decision: { not: 'Pending' },
+        // Une decision "Cancelled" (demande annulee avant que le validateur
+        // ne tranche) n'est pas une decision de sa part : hors de sa trace.
+        Decision: { notIn: ['Pending', 'Cancelled'] },
       },
       select: { EntityId: true },
     });
@@ -1286,6 +1289,13 @@ export class LeaveRequestService {
     approverEmployeeId: string,
     canOverride: boolean,
   ) {
+    // Garde de statut: verifiee meme pour canOverride, sinon une demande
+    // annulee/approuvee/refusee pourrait etre re-decidee (ex. ancien lien email).
+    if (!IN_APPROVAL_STATUSES.includes(leaveRequest.Status)) {
+      throw new BadRequestException(
+        `Cette demande n'est plus en attente de validation (statut "${leaveRequest.Status}")`,
+      );
+    }
     if (canOverride) return;
     if (leaveRequest.CurrentApprovalStep == null) {
       throw new ForbiddenException(
@@ -1569,10 +1579,17 @@ export class LeaveRequestService {
       existing.Status === 'Approved' || existing.Status === 'Registered';
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      // Cloture les decisions encore en attente pour invalider les liens email
+      // et eviter toute re-decision ulterieure.
+      await tx.approvalDecision.updateMany({
+        where: { EntityType: 'LeaveRequest', EntityId: id, Decision: 'Pending' },
+        data: { Decision: 'Cancelled', DecidedAt: new Date() },
+      });
       const updated = await tx.leaveRequest.update({
         where: { Id: id },
         data: {
           Status: 'Cancelled',
+          CurrentApprovalStep: null,
           ModifiedBy: requesterEmployeeId,
           ModifiedAt: new Date(),
         },
