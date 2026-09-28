@@ -12,7 +12,7 @@ import {
   WorkflowContext,
 } from '../notification/workflow-notifier.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
-import { formatDateFr } from '../mail/email-templates';
+import { formatDateFr, periodSuffixFr } from '../mail/email-templates';
 import { generateApprovalToken } from '../../common/approval-token';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { UpdateLeaveRequestDto } from './dto/update-leave-request.dto';
@@ -41,6 +41,7 @@ const OVERLAPPING_STATUSES = [
   'Done',
 ];
 
+const IN_APPROVAL_STATUSES = ['InApprovalN1', 'InApprovalN2', 'InApprovalN3', 'InApprovalN4'];
 const EDITABLE_STATUSES = ['Draft', 'Returned'];
 
 // Applique a chaque create/update mutant une demande — sans ça la reponse
@@ -73,16 +74,23 @@ export class LeaveRequestService {
     CreatedBy: string;
     LeaveTypeId: string;
     StartDate: Date;
+    StartPeriod: string;
     EndDate: Date;
+    EndPeriod: string;
     DaysCount: unknown;
+    Reason?: string | null;
     InterimEmployeeId?: string | null;
-    leaveType?: { Name: string; DocumentRequired?: boolean; DaysPerYear?: unknown } | null;
+    leaveType?: { Name: string; DaysPerYear?: unknown } | null;
     interimEmployee?: { FullName: string } | null;
+    employee?: { OrganizationUnitId: string; EmployeeCategoryId: string | null } | null;
   }): Promise<WorkflowContext> {
-    // Retour client du 23/09 : l'intérimaire et le justificatif requis
-    // n'apparaissaient jamais dans l'email de notification envoyé au
-    // validateur, ajoutés ici plutôt que dans le corps du message pour
-    // rester dans le même format "détails" que le reste. interimEmployeeId
+    // Retour client du 23/09 : l'intérimaire n'apparaissait jamais dans
+    // l'email de notification envoyé au validateur, ajouté ici plutôt que
+    // dans le corps du message pour rester dans le même format "détails"
+    // que le reste. Retour client du 28/09 : la ligne "Justificatif :
+    // Requis/Non requis" est remplacée par "Motif", avec le texte réellement
+    // saisi par l'employé dans le champ Motif de la demande (omise si le
+    // motif, optionnel, est vide). interimEmployeeId
     // permet en plus à notifySubmitted (WorkflowNotifierService) de
     // notifier l'intérimaire lui-même, ce qu'il ne faisait jamais avant.
     // Solde (retour client du 23/09, 2e passage) : demandé dans l'email de
@@ -97,6 +105,26 @@ export class LeaveRequestService {
     const soldeValue = daysPerYear <= 0
       ? 'Illimité'
       : `${await this.leaveTransactionService.getBalance(lr.EmployeeId, lr.LeaveTypeId)} jour(s)`;
+    // Retour client du 24/09 : "Matin"/"Après-midi" n'apparaissait jamais
+    // dans l'email (seule la date, sans la demi-journée), alors que c'est
+    // ce que l'employé a choisi dans le formulaire (voir "Début absence"
+    // dans AbsenceCreate.vue). Rien n'est ajouté pour "full", la journée
+    // entière n'a pas besoin d'être précisée (voir periodSuffixFr).
+    const periodSuffix = periodSuffixFr;
+    // Reprise prevue (retour client du 24/09) : meme calcul que l'apercu du
+    // formulaire de creation (AbsenceCreate.vue), absent jusqu'ici de
+    // l'email. Necessite l'unite/categorie de l'employe pour resoudre le
+    // calendrier applicable ; silencieusement omis si non disponible
+    // (findOneRaw les inclut toujours, mais toContext reste appelable avec
+    // un objet plus restreint).
+    const resume = lr.employee
+      ? await this.computeResumeDate(
+          lr.EndDate,
+          lr.EndPeriod,
+          lr.employee.OrganizationUnitId,
+          lr.employee.EmployeeCategoryId,
+        )
+      : null;
     return {
       kind: 'leave',
       id: lr.Id,
@@ -108,11 +136,14 @@ export class LeaveRequestService {
       details: [
         { label: 'Type de congé', value: lr.leaveType?.Name ?? '-' },
         { label: 'Solde', value: soldeValue },
-        { label: 'Du', value: formatDateFr(lr.StartDate) },
-        { label: 'Au', value: formatDateFr(lr.EndDate) },
+        { label: 'Du', value: `${formatDateFr(lr.StartDate)}${periodSuffix(lr.StartPeriod)}` },
+        { label: 'Au', value: `${formatDateFr(lr.EndDate)}${periodSuffix(lr.EndPeriod)}` },
         { label: 'Durée', value: `${Number(lr.DaysCount)} jour(s)` },
+        ...(resume
+          ? [{ label: 'Reprise prévue', value: `${formatDateFr(resume.date)}${periodSuffix(resume.period)}` }]
+          : []),
         { label: 'Intérimaire', value: lr.interimEmployee?.FullName ?? 'Aucun' },
-        { label: 'Justificatif', value: lr.leaveType?.DocumentRequired ? 'Requis' : 'Non requis' },
+        ...(lr.Reason?.trim() ? [{ label: 'Motif', value: lr.Reason.trim() }] : []),
       ],
     };
   }
@@ -322,6 +353,70 @@ export class LeaveRequestService {
     }
 
     return count;
+  }
+
+  // Date/periode de reprise prevue (miroir de utils/calendar.ts::getResumeDate
+  // cote frontend, meme calcul que l'apercu affiche dans le formulaire de
+  // creation) : un dernier jour "am" (matinee seule consommee) rend
+  // l'apres-midi du meme jour si c'est un jour ouvre, tout le reste rend le
+  // prochain jour ouvre au complet. Calculee a la volee plutot que stockee,
+  // a partir d'EndDate/EndPeriod (retour client du 24/09) : absente de
+  // l'email envoye au manager/employe (seule la date de fin y figurait,
+  // sans indiquer si la reprise est le matin ou l'apres-midi).
+  private async computeResumeDate(
+    endDate: Date,
+    endPeriod: string,
+    organizationUnitId: string,
+    employeeCategoryId: string | null,
+  ): Promise<{ date: Date; period: 'am' | 'pm' }> {
+    const calendar = await this.resolveApplicableCalendar(employeeCategoryId);
+    if (!calendar) return { date: endDate, period: 'am' };
+
+    const holidays = await this.prisma.holiday.findMany();
+    const applicableUnitIds = new Set(
+      await this.collectAncestorUnitIds(organizationUnitId),
+    );
+
+    const isHoliday = (date: Date): boolean => {
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      return holidays.some((h) => {
+        if (
+          h.HolidayType === 'Local' &&
+          !(h.OrganizationUnitId && applicableUnitIds.has(h.OrganizationUnitId))
+        ) {
+          return false;
+        }
+        const hd = h.Date;
+        if (h.IsRecurring) {
+          return (
+            hd.getUTCMonth() + 1 === Number(mm) && hd.getUTCDate() === Number(dd)
+          );
+        }
+        return (
+          hd.getUTCFullYear() === date.getFullYear() &&
+          hd.getUTCMonth() === date.getMonth() &&
+          hd.getUTCDate() === date.getDate()
+        );
+      });
+    };
+
+    const isWorkingDay = (date: Date): boolean => {
+      const dayConfig = calendar.workDays.find(
+        (d) => d.DayOfWeek === DAY_KEYS[date.getDay()],
+      );
+      return !!dayConfig?.IsEnabled && !isHoliday(date);
+    };
+
+    if (endPeriod === 'am' && isWorkingDay(endDate)) {
+      return { date: endDate, period: 'pm' };
+    }
+    const resumeDay = new Date(endDate);
+    resumeDay.setDate(resumeDay.getDate() + 1);
+    while (!isWorkingDay(resumeDay)) {
+      resumeDay.setDate(resumeDay.getDate() + 1);
+    }
+    return { date: resumeDay, period: 'am' };
   }
 
   // Determine le validateur reel d'un membre de pool a une date donnee : le
@@ -576,7 +671,27 @@ export class LeaveRequestService {
         'Seule une demande en brouillon peut être supprimée',
       );
     }
-    return this.prisma.leaveRequest.delete({ where: { Id: id } });
+    // Attachment n'a pas de cle etrangere vers la demande (reference
+    // polymorphe, voir le modele) : sans ce nettoyage, les justificatifs d'un
+    // brouillon supprime resteraient en base, rattaches a un Id disparu.
+    return this.prisma.$transaction(async (tx) => {
+      await tx.attachment.deleteMany({
+        where: { EntityType: 'LeaveRequest', EntityId: id },
+      });
+      return tx.leaveRequest.delete({ where: { Id: id } });
+    });
+  }
+
+  private async assertJustificatifProvided(
+    leaveRequestId: string,
+    message: string,
+  ) {
+    const count = await this.prisma.attachment.count({
+      where: { EntityType: 'LeaveRequest', EntityId: leaveRequestId },
+    });
+    if (count === 0) {
+      throw new BadRequestException(message);
+    }
   }
 
   // Suppression definitive (Lot I) — distincte de remove() ci-dessus (hard
@@ -624,7 +739,11 @@ export class LeaveRequestService {
     // client du 23/09 (toContext() l'affiche desormais aussi).
     const leaveRequest = await this.prisma.leaveRequest.findUnique({
       where: { Id: id },
-      include: { leaveType: true, interimEmployee: { select: { FullName: true } } },
+      include: {
+        leaveType: true,
+        interimEmployee: { select: { FullName: true } },
+        employee: { select: { OrganizationUnitId: true, EmployeeCategoryId: true } },
+      },
     });
     if (!leaveRequest || leaveRequest.IsDeleted) {
       throw new NotFoundException(`Demande de congé ${id} introuvable`);
@@ -809,7 +928,9 @@ export class LeaveRequestService {
       where: {
         EntityType: 'LeaveRequest',
         ValidatedByEmployeeId: employeeId,
-        Decision: { not: 'Pending' },
+        // Une decision "Cancelled" (demande annulee avant que le validateur
+        // ne tranche) n'est pas une decision de sa part : hors de sa trace.
+        Decision: { notIn: ['Pending', 'Cancelled'] },
       },
       select: { EntityId: true },
     });
@@ -852,6 +973,21 @@ export class LeaveRequestService {
     const leaveType = await this.prisma.leaveType.findUniqueOrThrow({
       where: { Id: existing.LeaveTypeId },
     });
+
+    // Justificatif obligatoire (retour client du 28/09) : bloque la
+    // soumission tant qu'aucune piece jointe n'est rattachee, y compris
+    // pour l'envoi d'un brouillon ou le renvoi d'une demande retournee. Le
+    // reglage est relu ici a chaque soumission : le modifier sur le type
+    // s'applique donc aussi aux brouillons deja crees. Les types du workflow
+    // medical sont exclus : la declaration y est faite a posteriori (l'employe
+    // peut etre absent sans delai, le certificat arrive apres), leur
+    // justificatif est exige a la regularisation, voir regularize().
+    if (leaveType.DocumentRequired && leaveType.WorkflowType !== 'Medical') {
+      await this.assertJustificatifProvided(
+        existing.Id,
+        'Un justificatif est obligatoire pour ce type de congé : joignez le document avant de soumettre la demande',
+      );
+    }
 
     await this.assertNoOverlap(
       existing.EmployeeId,
@@ -1153,6 +1289,13 @@ export class LeaveRequestService {
     approverEmployeeId: string,
     canOverride: boolean,
   ) {
+    // Garde de statut: verifiee meme pour canOverride, sinon une demande
+    // annulee/approuvee/refusee pourrait etre re-decidee (ex. ancien lien email).
+    if (!IN_APPROVAL_STATUSES.includes(leaveRequest.Status)) {
+      throw new BadRequestException(
+        `Cette demande n'est plus en attente de validation (statut "${leaveRequest.Status}")`,
+      );
+    }
     if (canOverride) return;
     if (leaveRequest.CurrentApprovalStep == null) {
       throw new ForbiddenException(
@@ -1436,10 +1579,17 @@ export class LeaveRequestService {
       existing.Status === 'Approved' || existing.Status === 'Registered';
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      // Cloture les decisions encore en attente pour invalider les liens email
+      // et eviter toute re-decision ulterieure.
+      await tx.approvalDecision.updateMany({
+        where: { EntityType: 'LeaveRequest', EntityId: id, Decision: 'Pending' },
+        data: { Decision: 'Cancelled', DecidedAt: new Date() },
+      });
       const updated = await tx.leaveRequest.update({
         where: { Id: id },
         data: {
           Status: 'Cancelled',
+          CurrentApprovalStep: null,
           ModifiedBy: requesterEmployeeId,
           ModifiedAt: new Date(),
         },
@@ -1504,6 +1654,15 @@ export class LeaveRequestService {
     if (existing.Status !== 'Done') {
       throw new BadRequestException(
         'Seule une demande effectuée peut être régularisée',
+      );
+    }
+    // Pendant medical de la verification faite a la soumission (voir
+    // submit()) : la regularisation est precisement l'etape "justificatif
+    // fourni", elle ne peut donc pas avoir lieu sans.
+    if (existing.leaveType?.DocumentRequired) {
+      await this.assertJustificatifProvided(
+        existing.Id,
+        'Un justificatif est obligatoire pour régulariser cette demande : joignez le document (par exemple le certificat médical)',
       );
     }
     const updated = await this.prisma.leaveRequest.update({
