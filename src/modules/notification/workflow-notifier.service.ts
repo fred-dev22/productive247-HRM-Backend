@@ -3,7 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from './notification.service';
 import { MailService } from '../mail/mail.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
-import { renderEmailHtml, frontendOrigin, type EmailAccent, type EmailDetailRow } from '../mail/email-templates';
+import { AttachmentService, type EmailAttachment } from '../attachment/attachment.service';
+import { renderEmailHtml, escapeHtml, frontendOrigin, type EmailAccent, type EmailDetailRow } from '../mail/email-templates';
 
 export type WorkflowKind = 'leave' | 'mission' | 'expense';
 
@@ -91,7 +92,29 @@ export class WorkflowNotifierService {
     private readonly notifications: NotificationService,
     private readonly mail: MailService,
     private readonly realtime: RealtimeGateway,
+    private readonly attachments: AttachmentService,
   ) {}
+
+  // Justificatif de la demande de conge (retour client du 28/09) : joint a
+  // l'email du VALIDATEUR (nouvelle demande, ou passage au niveau suivant),
+  // pour qu'il l'ait sous les yeux sans ouvrir SharePoint. Volontairement
+  // absent des autres emails : l'interimaire n'a pas a recevoir un document
+  // potentiellement medical, et le demandeur/createur possede deja le
+  // fichier. Ne leve jamais (voir AttachmentService.loadForEmail). Les
+  // fichiers trop gros ou illisibles ne sont pas joints : une phrase en
+  // bas du message le precise et renvoie a la fiche de la demande.
+  private async justificatifsForEmail(
+    ctx: WorkflowContext,
+  ): Promise<{ attachments: EmailAttachment[]; note: string[] }> {
+    if (ctx.kind !== 'leave') return { attachments: [], note: [] };
+    const { files, skipped } = await this.attachments.loadForEmail('LeaveRequest', ctx.id);
+    const note = skipped.length
+      ? [
+          `Justificatif non joint à cet email (fichier trop volumineux ou indisponible) : ${skipped.map((n) => escapeHtml(n)).join(', ')}. Consultez-le depuis la fiche de la demande.`,
+        ]
+      : [];
+    return { attachments: files, note };
+  }
 
   // Signale a tout le monde connecte qu'une donnee pertinente pour les KPI
   // du dashboard a change (nouvelle demande, changement de statut...) — le
@@ -158,6 +181,37 @@ export class WorkflowNotifierService {
     ];
   }
 
+  // Email "a valider" envoye au validateur (avec le justificatif en piece
+  // jointe pour un conge). La preparation des pieces jointes (telechargement
+  // SharePoint) se fait ICI, dans la branche email : la notification in-app
+  // envoyee en parallele n'attend donc jamais SharePoint.
+  private async sendValidationEmail(
+    ctx: WorkflowContext,
+    to: string,
+    title: string,
+    message: string,
+    token: string,
+  ) {
+    const { attachments, note } = await this.justificatifsForEmail(ctx);
+    const html = (extraNote: string[]) =>
+      renderEmailHtml({
+        accent: 'primary', chipLabel: 'À valider', headerLabel: KIND_HEADER_LABEL[ctx.kind], title, bodyLines: [message, ...note, ...extraNote], details: ctx.details,
+        actionButtons: this.approvalActionButtons(token),
+      });
+    const sent = await this.mail.send({ to, subject: title, html: html([]), attachments });
+    // Graph peut refuser un message trop lourd avec ses pieces jointes : mieux
+    // vaut que le validateur recoive la demande sans le fichier (avec une
+    // mention) que rien du tout.
+    if (!sent && attachments.length > 0) {
+      const names = attachments.map((a) => escapeHtml(a.name)).join(', ');
+      await this.mail.send({
+        to,
+        subject: title,
+        html: html([`Justificatif non joint à cet email (message trop volumineux) : ${names}. Consultez-le depuis la fiche de la demande.`]),
+      });
+    }
+  }
+
   // Nouvelle demande soumise (ou premier niveau apres retour) : le
   // validateur du niveau courant est notifie in-app ET par email — sans
   // email, un manager qui ne garde pas l'app ouverte ne sait jamais qu'une
@@ -174,14 +228,7 @@ export class WorkflowNotifierService {
     const message = `${beneficiary.name} : ${ctx.summary} en attente de votre validation`;
     await Promise.all([
       this.notifyPeople([approver], { type: ctx.kind, title, message, href: hrefToValidate(ctx) }),
-      this.mail.send({
-        to: approver.email,
-        subject: title,
-        html: renderEmailHtml({
-          accent: 'primary', chipLabel: 'À valider', headerLabel: KIND_HEADER_LABEL[ctx.kind], title, bodyLines: [message], details: ctx.details,
-          actionButtons: this.approvalActionButtons(token),
-        }),
-      }),
+      this.sendValidationEmail(ctx, approver.email, title, message, token),
       this.notifyInterim(ctx, beneficiary.name),
     ]);
   }
@@ -200,7 +247,9 @@ export class WorkflowNotifierService {
       this.mail.send({
         to: interim.email,
         subject: title,
-        html: renderEmailHtml({ accent: 'primary', chipLabel: 'Intérim', headerLabel: KIND_HEADER_LABEL[ctx.kind], title, bodyLines: [message], details: ctx.details }),
+        // Le motif (texte libre, parfois medical) n'est pas transmis a
+        // l'interimaire, au meme titre que le justificatif.
+        html: renderEmailHtml({ accent: 'primary', chipLabel: 'Intérim', headerLabel: KIND_HEADER_LABEL[ctx.kind], title, bodyLines: [message], details: ctx.details?.filter((d) => d.label !== 'Motif') }),
       }),
     ]);
   }
@@ -220,14 +269,7 @@ export class WorkflowNotifierService {
     const message = `${beneficiary.name} : ${ctx.summary} en attente de votre validation`;
     await Promise.all([
       this.notifyPeople([nextApprover], { type: ctx.kind, title, message, href: hrefToValidate(ctx) }),
-      this.mail.send({
-        to: nextApprover.email,
-        subject: title,
-        html: renderEmailHtml({
-          accent: 'primary', chipLabel: 'À valider', headerLabel: KIND_HEADER_LABEL[ctx.kind], title, bodyLines: [message], details: ctx.details,
-          actionButtons: this.approvalActionButtons(token),
-        }),
-      }),
+      this.sendValidationEmail(ctx, nextApprover.email, title, message, token),
     ]);
     await this.notifyPeople([beneficiary, creator], {
       type: ctx.kind,

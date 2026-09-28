@@ -12,7 +12,7 @@ import {
   WorkflowContext,
 } from '../notification/workflow-notifier.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
-import { formatDateFr } from '../mail/email-templates';
+import { formatDateFr, periodSuffixFr } from '../mail/email-templates';
 import { generateApprovalToken } from '../../common/approval-token';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { UpdateLeaveRequestDto } from './dto/update-leave-request.dto';
@@ -77,15 +77,19 @@ export class LeaveRequestService {
     EndDate: Date;
     EndPeriod: string;
     DaysCount: unknown;
+    Reason?: string | null;
     InterimEmployeeId?: string | null;
-    leaveType?: { Name: string; DocumentRequired?: boolean; DaysPerYear?: unknown } | null;
+    leaveType?: { Name: string; DaysPerYear?: unknown } | null;
     interimEmployee?: { FullName: string } | null;
     employee?: { OrganizationUnitId: string; EmployeeCategoryId: string | null } | null;
   }): Promise<WorkflowContext> {
-    // Retour client du 23/09 : l'intérimaire et le justificatif requis
-    // n'apparaissaient jamais dans l'email de notification envoyé au
-    // validateur, ajoutés ici plutôt que dans le corps du message pour
-    // rester dans le même format "détails" que le reste. interimEmployeeId
+    // Retour client du 23/09 : l'intérimaire n'apparaissait jamais dans
+    // l'email de notification envoyé au validateur, ajouté ici plutôt que
+    // dans le corps du message pour rester dans le même format "détails"
+    // que le reste. Retour client du 28/09 : la ligne "Justificatif :
+    // Requis/Non requis" est remplacée par "Motif", avec le texte réellement
+    // saisi par l'employé dans le champ Motif de la demande (omise si le
+    // motif, optionnel, est vide). interimEmployeeId
     // permet en plus à notifySubmitted (WorkflowNotifierService) de
     // notifier l'intérimaire lui-même, ce qu'il ne faisait jamais avant.
     // Solde (retour client du 23/09, 2e passage) : demandé dans l'email de
@@ -104,9 +108,8 @@ export class LeaveRequestService {
     // dans l'email (seule la date, sans la demi-journée), alors que c'est
     // ce que l'employé a choisi dans le formulaire (voir "Début absence"
     // dans AbsenceCreate.vue). Rien n'est ajouté pour "full", la journée
-    // entière n'a pas besoin d'être précisée.
-    const periodSuffix = (period: string) =>
-      period === 'am' ? ' (Matin)' : period === 'pm' ? ' (Après-midi)' : '';
+    // entière n'a pas besoin d'être précisée (voir periodSuffixFr).
+    const periodSuffix = periodSuffixFr;
     // Reprise prevue (retour client du 24/09) : meme calcul que l'apercu du
     // formulaire de creation (AbsenceCreate.vue), absent jusqu'ici de
     // l'email. Necessite l'unite/categorie de l'employe pour resoudre le
@@ -139,7 +142,7 @@ export class LeaveRequestService {
           ? [{ label: 'Reprise prévue', value: `${formatDateFr(resume.date)}${periodSuffix(resume.period)}` }]
           : []),
         { label: 'Intérimaire', value: lr.interimEmployee?.FullName ?? 'Aucun' },
-        { label: 'Justificatif', value: lr.leaveType?.DocumentRequired ? 'Requis' : 'Non requis' },
+        ...(lr.Reason?.trim() ? [{ label: 'Motif', value: lr.Reason.trim() }] : []),
       ],
     };
   }
@@ -667,7 +670,27 @@ export class LeaveRequestService {
         'Seule une demande en brouillon peut être supprimée',
       );
     }
-    return this.prisma.leaveRequest.delete({ where: { Id: id } });
+    // Attachment n'a pas de cle etrangere vers la demande (reference
+    // polymorphe, voir le modele) : sans ce nettoyage, les justificatifs d'un
+    // brouillon supprime resteraient en base, rattaches a un Id disparu.
+    return this.prisma.$transaction(async (tx) => {
+      await tx.attachment.deleteMany({
+        where: { EntityType: 'LeaveRequest', EntityId: id },
+      });
+      return tx.leaveRequest.delete({ where: { Id: id } });
+    });
+  }
+
+  private async assertJustificatifProvided(
+    leaveRequestId: string,
+    message: string,
+  ) {
+    const count = await this.prisma.attachment.count({
+      where: { EntityType: 'LeaveRequest', EntityId: leaveRequestId },
+    });
+    if (count === 0) {
+      throw new BadRequestException(message);
+    }
   }
 
   // Suppression definitive (Lot I) — distincte de remove() ci-dessus (hard
@@ -947,6 +970,21 @@ export class LeaveRequestService {
     const leaveType = await this.prisma.leaveType.findUniqueOrThrow({
       where: { Id: existing.LeaveTypeId },
     });
+
+    // Justificatif obligatoire (retour client du 28/09) : bloque la
+    // soumission tant qu'aucune piece jointe n'est rattachee, y compris
+    // pour l'envoi d'un brouillon ou le renvoi d'une demande retournee. Le
+    // reglage est relu ici a chaque soumission : le modifier sur le type
+    // s'applique donc aussi aux brouillons deja crees. Les types du workflow
+    // medical sont exclus : la declaration y est faite a posteriori (l'employe
+    // peut etre absent sans delai, le certificat arrive apres), leur
+    // justificatif est exige a la regularisation, voir regularize().
+    if (leaveType.DocumentRequired && leaveType.WorkflowType !== 'Medical') {
+      await this.assertJustificatifProvided(
+        existing.Id,
+        'Un justificatif est obligatoire pour ce type de congé : joignez le document avant de soumettre la demande',
+      );
+    }
 
     await this.assertNoOverlap(
       existing.EmployeeId,
@@ -1599,6 +1637,15 @@ export class LeaveRequestService {
     if (existing.Status !== 'Done') {
       throw new BadRequestException(
         'Seule une demande effectuée peut être régularisée',
+      );
+    }
+    // Pendant medical de la verification faite a la soumission (voir
+    // submit()) : la regularisation est precisement l'etape "justificatif
+    // fourni", elle ne peut donc pas avoir lieu sans.
+    if (existing.leaveType?.DocumentRequired) {
+      await this.assertJustificatifProvided(
+        existing.Id,
+        'Un justificatif est obligatoire pour régulariser cette demande : joignez le document (par exemple le certificat médical)',
       );
     }
     const updated = await this.prisma.leaveRequest.update({
