@@ -520,7 +520,7 @@ model ApprovalDecision {
   DirectValidatorEmployeeId String? @db.UniqueIdentifier
   ValidatedByEmployeeId String    @db.UniqueIdentifier
   StepOrder             Int
-  // Decision: Pending | Approved | Rejected | Returned
+  // Decision: Pending | Approved | Rejected | Returned | Cancelled
   Decision              String    @db.NVarChar(20)
   Comment               String?   @db.NVarChar(500)
   DecidedAt             DateTime? @db.DateTime2
