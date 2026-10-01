@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsString, MaxLength, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 
 export class CreateHiringRequestDto {
   @IsString()
@@ -18,4 +18,17 @@ export class CreateHiringRequestDto {
   @IsString()
   @IsNotEmpty()
   Profile: string;
+
+  // Poste existant du referentiel (optionnel). null (en modification) le
+  // detache : la demande repasse en poste libre.
+  @IsOptional()
+  @IsUUID()
+  PositionId?: string | null;
+
+  // Beneficiaire reel de la demande si different du createur (retour client
+  // du 19/09 : un assistant peut exprimer un besoin pour son directeur).
+  // Omis ou null = la demande reste au nom du createur.
+  @IsOptional()
+  @IsUUID()
+  RequestedForEmployeeId?: string | null;
 }
