@@ -45,13 +45,11 @@ export class MailService {
   // Ne leve jamais — un email qui echoue ne doit jamais faire echouer
   // l'action metier (approuver une demande, creer un compte...) qui l'a
   // declenche. Retourne juste un booleen pour le logging/tests.
-  // `attachments` (optionnel) : pieces jointes en base64, mappees vers des
-  // fileAttachment Graph — utilise pour les invitations calendrier (.ics) du
-  // module Recrutement.
   async send(params: {
     to: string;
     subject: string;
     html: string;
+    // Fichiers joints (contenu en base64), voir AttachmentService.loadForEmail.
     attachments?: { name: string; contentType: string; contentBytes: string }[];
   }): Promise<boolean> {
     const sender = process.env.GRAPH_MAIL_SENDER;

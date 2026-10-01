@@ -553,14 +553,14 @@ model ApprovalDecision {
   // (DirectValidatorEmployeeId rempli ci-dessous) — jamais les deux, jamais
   // aucun des deux. Voir LeaveRequestService.routeToApproval/
   // routeToDirectValidator/approve/assertIsCurrentApprover.
-  ApprovalPoolMemberId      String?   @db.UniqueIdentifier
-  DirectValidatorEmployeeId String?   @db.UniqueIdentifier
-  ValidatedByEmployeeId     String    @db.UniqueIdentifier
-  StepOrder                 Int
-  // Decision: Pending | Approved | Rejected | Returned
-  Decision                  String    @db.NVarChar(20)
-  Comment                   String?   @db.NVarChar(500)
-  DecidedAt                 DateTime? @db.DateTime2
+  ApprovalPoolMemberId  String?   @db.UniqueIdentifier
+  DirectValidatorEmployeeId String? @db.UniqueIdentifier
+  ValidatedByEmployeeId String    @db.UniqueIdentifier
+  StepOrder             Int
+  // Decision: Pending | Approved | Rejected | Returned | Cancelled
+  Decision              String    @db.NVarChar(20)
+  Comment               String?   @db.NVarChar(500)
+  DecidedAt             DateTime? @db.DateTime2
   // Jeton public pour la validation par email (clique-pour-approuver sans
   // connexion) — genere a la creation de la decision, verifie cote
   // PublicApprovalService (findFirst, pas findUnique : pas de contrainte
