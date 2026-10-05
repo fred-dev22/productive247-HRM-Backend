@@ -14,6 +14,7 @@ import {
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { formatDateFr, periodSuffixFr } from '../mail/email-templates';
 import { generateApprovalToken } from '../../common/approval-token';
+import { nextReferenceCode, retryOnReferenceCodeConflict } from '../../common/utils/reference-code.util';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { UpdateLeaveRequestDto } from './dto/update-leave-request.dto';
 import { DecideLeaveRequestDto } from './dto/decide-leave-request.dto';
@@ -151,10 +152,12 @@ export class LeaveRequestService {
   private async generateReferenceCode(): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = `DMD-${year}-`;
-    const count = await this.prisma.leaveRequest.count({
+    const last = await this.prisma.leaveRequest.findFirst({
       where: { ReferenceCode: { startsWith: prefix } },
+      orderBy: { ReferenceCode: 'desc' },
+      select: { ReferenceCode: true },
     });
-    return `${prefix}${String(count + 1).padStart(5, '0')}`;
+    return nextReferenceCode(prefix, last?.ReferenceCode);
   }
 
   // Solde insuffisant n'est plus bloquant a la soumission (decision du
@@ -549,25 +552,25 @@ export class LeaveRequestService {
       );
     }
 
-    const referenceCode = await this.generateReferenceCode();
-
-    return this.prisma.leaveRequest.create({
-      data: {
-        ReferenceCode: referenceCode,
-        EmployeeId: employeeId,
-        LeaveTypeId: dto.LeaveTypeId,
-        StartDate: startDate,
-        StartPeriod: startPeriod,
-        EndDate: endDate,
-        EndPeriod: endPeriod,
-        DaysCount: daysCount,
-        Reason: dto.Reason,
-        InterimEmployeeId: dto.InterimEmployeeId,
-        Status: 'Draft',
-        CreatedBy: requesterEmployeeId,
-      },
-      include: LEAVE_REQUEST_INCLUDE,
-    });
+    return retryOnReferenceCodeConflict(async () =>
+      this.prisma.leaveRequest.create({
+        data: {
+          ReferenceCode: await this.generateReferenceCode(),
+          EmployeeId: employeeId,
+          LeaveTypeId: dto.LeaveTypeId,
+          StartDate: startDate,
+          StartPeriod: startPeriod,
+          EndDate: endDate,
+          EndPeriod: endPeriod,
+          DaysCount: daysCount,
+          Reason: dto.Reason,
+          InterimEmployeeId: dto.InterimEmployeeId,
+          Status: 'Draft',
+          CreatedBy: requesterEmployeeId,
+        },
+        include: LEAVE_REQUEST_INCLUDE,
+      }),
+    );
   }
 
   async update(
