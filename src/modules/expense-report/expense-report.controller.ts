@@ -6,6 +6,7 @@ import { DecideExpenseReportDto } from './dto/decide-expense-report.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { CurrentPermissions } from '../../common/decorators/current-permissions.decorator';
+import { assertMayCreateForOthers } from '../../common/utils/act-for-other.util';
 
 @Controller('expense-reports')
 export class ExpenseReportController {
@@ -15,7 +16,9 @@ export class ExpenseReportController {
   create(
     @Body() dto: CreateExpenseReportDto,
     @CurrentUser('employeeId') employeeId: string,
+    @CurrentPermissions() permissions: Set<string>,
   ) {
+    assertMayCreateForOthers(dto.EmployeeId, employeeId, permissions, 'FRAIS_CREER_POUR_AUTRE');
     return this.service.create(dto, employeeId);
   }
 
