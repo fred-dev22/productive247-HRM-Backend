@@ -14,16 +14,19 @@ export const PERMISSIONS: { Code: string; Label: string; Module: string }[] = [
   { Code: 'CONGE_VOIR_TOUT', Label: 'Voir toutes les demandes de congé', Module: 'Congés' },
   { Code: 'CONGE_VALIDER', Label: 'Valider / rejeter une demande de congé', Module: 'Congés' },
   { Code: 'CONGE_SUPPRIMER', Label: 'Supprimer définitivement une demande de congé', Module: 'Congés' },
+  { Code: 'CONGE_CREER_POUR_AUTRE', Label: 'Créer une demande de congé pour un autre employé', Module: 'Congés' },
 
   { Code: 'MISSION_VOIR_EQUIPE', Label: "Voir les ordres de mission de son équipe", Module: 'Missions' },
   { Code: 'MISSION_VOIR_TOUT', Label: 'Voir tous les ordres de mission', Module: 'Missions' },
   { Code: 'MISSION_VALIDER', Label: 'Valider / rejeter un ordre de mission', Module: 'Missions' },
   { Code: 'MISSION_SUPPRIMER', Label: 'Supprimer définitivement un ordre de mission', Module: 'Missions' },
+  { Code: 'MISSION_CREER_POUR_AUTRE', Label: 'Créer un ordre de mission pour un autre employé', Module: 'Missions' },
 
   { Code: 'FRAIS_VOIR_EQUIPE', Label: "Voir les notes de frais de son équipe", Module: 'Notes de frais' },
   { Code: 'FRAIS_VOIR_TOUT', Label: 'Voir toutes les notes de frais', Module: 'Notes de frais' },
   { Code: 'FRAIS_VALIDER', Label: 'Valider / rejeter une note de frais', Module: 'Notes de frais' },
   { Code: 'FRAIS_SUPPRIMER', Label: 'Supprimer définitivement une note de frais', Module: 'Notes de frais' },
+  { Code: 'FRAIS_CREER_POUR_AUTRE', Label: 'Créer une note de frais pour un autre employé', Module: 'Notes de frais' },
 
   { Code: 'EMPLOYE_VOIR_EQUIPE', Label: 'Voir la fiche des employés de son équipe', Module: 'Employés' },
   { Code: 'EMPLOYE_VOIR_TOUT', Label: 'Voir la fiche de tous les employés', Module: 'Employés' },
@@ -65,6 +68,8 @@ export const VALIDATEUR_PERMISSIONS = [
 export const ADMIN_RH_PERMISSIONS = [
   ...VALIDATEUR_PERMISSIONS,
   'CONGE_VOIR_TOUT', 'MISSION_VOIR_TOUT', 'FRAIS_VOIR_TOUT',
+  // Creer une demande au nom d'un autre employe : RH et DRH uniquement.
+  'CONGE_CREER_POUR_AUTRE', 'MISSION_CREER_POUR_AUTRE', 'FRAIS_CREER_POUR_AUTRE',
   'EMPLOYE_VOIR_TOUT', 'EMPLOYE_CREER', 'EMPLOYE_MODIFIER', 'EMPLOYE_DESACTIVER', 'EMPLOYE_COMPTE_CREER',
   'ENTITE_VOIR', 'ENTITE_CREER', 'ENTITE_MODIFIER', 'ENTITE_SOUMETTRE',
   'CONFIG_CALENDRIER', 'CONFIG_JOURS_FERIES', 'CONFIG_TYPES_CONGE', 'CONFIG_CATEGORIES_EMPLOYE', 'CONFIG_FRAIS_MISSION', 'CONFIG_METIERS_POSTES',

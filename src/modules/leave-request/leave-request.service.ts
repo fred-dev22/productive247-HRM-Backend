@@ -179,10 +179,9 @@ export class LeaveRequestService {
     return nextReferenceCode(prefix, last?.ReferenceCode);
   }
 
-  // Solde insuffisant n'est plus bloquant a la soumission (decision du
-  // 04/08, meme traitement que le preavis, voir routeToApproval) — cet
-  // indicateur permet au front d'afficher l'avertissement en rouge sur les
-  // ecrans de validation, calcule au moment de l'affichage (pas figé a la
+  // Solde insuffisant : bloquant a la soumission depuis le 08/10 (voir
+  // assertBalanceSufficient). Cet indicateur reste utile aux ecrans de validation
+  // (demandes deja soumises, solde ayant pu evoluer depuis) ; calcule au moment de l'affichage (pas figé a la
   // soumission) puisque le solde peut evoluer entre-temps.
   private async attachBalanceFlag<
     T extends {
@@ -1017,6 +1016,14 @@ export class LeaveRequestService {
       );
     }
 
+    // Solde insuffisant : BLOQUANT a la soumission (retour client du 08/10, qui
+    // revient sur la decision du 04/08 ; le preavis, lui, reste non bloquant).
+    // Le manque de solde empeche d'envoyer la demande : l'employe peut garder
+    // un brouillon ou choisir un type sans solde (conge non paye). Ne s'applique
+    // pas aux types sans quota (DaysPerYear <= 0) ; desactivable par type via
+    // LeaveType.BlockIfInsufficientBalance (ex. un type medical).
+    await this.assertBalanceSufficient(existing, leaveType);
+
     await this.assertNoOverlap(
       existing.EmployeeId,
       existing.StartDate,
@@ -1050,6 +1057,27 @@ export class LeaveRequestService {
       leaveType,
       requesterEmployeeId,
     );
+  }
+
+  private async assertBalanceSufficient(
+    request: { EmployeeId: string; LeaveTypeId: string; DaysCount: unknown },
+    leaveType: { Name?: string; DaysPerYear: unknown; BlockIfInsufficientBalance?: boolean },
+  ) {
+    // Reglable par type (LeaveType.BlockIfInsufficientBalance, bloquant par
+    // defaut, y compris pour le workflow medical) ; un type sans quota n'a
+    // aucun solde a respecter.
+    if (leaveType.BlockIfInsufficientBalance === false || Number(leaveType.DaysPerYear) <= 0) return;
+    const balance = await this.leaveTransactionService.getBalance(
+      request.EmployeeId,
+      request.LeaveTypeId,
+    );
+    const requested = Number(request.DaysCount);
+    if (balance < requested) {
+      throw new BadRequestException(
+        `Solde insuffisant : ${balance} jour(s) disponible(s) pour ${requested} jour(s) demandé(s). ` +
+          'Enregistrez un brouillon, réduisez la durée ou choisissez un congé sans solde (congé non payé).',
+      );
+    }
   }
 
   // Solde insuffisant n'est pas bloquant ici non plus (decision du 12/08,
@@ -1172,10 +1200,9 @@ export class LeaveRequestService {
     // voit l'avertissement (calculé côté front à partir de StartDate/
     // CreatedAt/MinNoticeDays) et décide en connaissance de cause.
 
-    // Le solde insuffisant n'est plus bloquant non plus (decision du 04/08,
-    // meme traitement que le preavis) — la demande est quand meme soumise,
-    // le front affiche l'avertissement en rouge et le validateur decide en
-    // connaissance de cause. La consommation reste plafonnee a 0 par
+    // Le solde insuffisant est verifie en amont, a la soumission (voir
+    // submit() / assertBalanceSufficient). Le solde pouvant evoluer entre la
+    // soumission et la decision, la consommation reste plafonnee a 0 par
     // adjustBalance (jamais de solde negatif en base), voir approve().
 
     // Validateur direct (Employee.DirectValidatorId) vs pool par entite : le
