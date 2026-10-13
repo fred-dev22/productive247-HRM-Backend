@@ -6,7 +6,6 @@ import { DecideMissionOrderDto } from './dto/decide-mission-order.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { CurrentPermissions } from '../../common/decorators/current-permissions.decorator';
-import { assertMayCreateForOthers } from '../../common/utils/act-for-other.util';
 
 @Controller('mission-orders')
 export class MissionOrderController {
@@ -18,8 +17,9 @@ export class MissionOrderController {
     @CurrentUser('employeeId') employeeId: string,
     @CurrentPermissions() permissions: Set<string>,
   ) {
-    assertMayCreateForOthers(dto.EmployeeId, employeeId, permissions, 'MISSION_CREER_POUR_AUTRE');
-    return this.service.create(dto, employeeId);
+    // Sans la permission, seule la creation pour soi ou pour un employe de sa
+    // propre entite est permise : verifie dans le service (voir assertMayCreateFor).
+    return this.service.create(dto, employeeId, permissions.has('MISSION_CREER_POUR_AUTRE'));
   }
 
   // Doit rester avant ':id' — sinon Nest matcherait ces segments comme des id.
