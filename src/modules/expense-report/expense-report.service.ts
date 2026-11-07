@@ -6,6 +6,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  ApproverSpec,
+  canDecide,
+  findApplicableStep as findApplicableApproverStep,
+  resolveApprovers,
+} from '../../common/utils/approver-resolution.util';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
 import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
 import { generateApprovalToken } from '../../common/approval-token';
@@ -86,33 +92,11 @@ export class ExpenseReportService {
     return report;
   }
 
-  // Voir LeaveRequestService.resolveActualApprover — meme logique, dupliquee
-  // faute de base commune entre les 3 modules de workflow d'approbation.
-  private async resolveActualApprover(
-    member: { EmployeeId: string; InterimEmployeeId: string | null },
-    at: Date,
-  ): Promise<string> {
-    if (!member.InterimEmployeeId) return member.EmployeeId;
-    const onApprovedLeave = await this.prisma.leaveRequest.findFirst({
-      where: {
-        EmployeeId: member.EmployeeId,
-        Status: 'Approved',
-        StartDate: { lte: at },
-        EndDate: { gte: at },
-        IsDeleted: false,
-      },
-    });
-    return onApprovedLeave ? member.InterimEmployeeId : member.EmployeeId;
-  }
-
-  private async findApplicableStep<
-    T extends { EmployeeId: string; InterimEmployeeId: string | null; StepOrder: number },
-  >(sortedMembers: T[], requesterEmployeeId: string): Promise<{ member: T; approverId: string } | undefined> {
-    for (const member of sortedMembers) {
-      const approverId = await this.resolveActualApprover(member, new Date());
-      if (approverId !== requesterEmployeeId) return { member, approverId };
-    }
-    return undefined;
+  private async findApplicableStep<T extends ApproverSpec & { StepOrder: number }>(
+    sortedMembers: T[],
+    requesterEmployeeId: string,
+  ): Promise<{ member: T; approverId: string; coApproverIds: string[] } | undefined> {
+    return findApplicableApproverStep(sortedMembers, requesterEmployeeId);
   }
 
   // ── CRUD ─────────────────────────────────────────────────────────────
@@ -347,7 +331,7 @@ export class ExpenseReportService {
       const member = await this.prisma.approvalPoolMember.findFirst({
         where: { ApprovalPoolId: r.ApprovalPoolId as string, StepOrder: r.CurrentApprovalStep as number },
       });
-      if (member && (await this.resolveActualApprover(member, now)) === employeeId) {
+      if (member && canDecide(resolveApprovers(member), employeeId)) {
         result.push(r);
       }
     }
@@ -411,7 +395,7 @@ export class ExpenseReportService {
       return updated;
     }
 
-    const { member: firstStep, approverId } = applicable;
+    const { member: firstStep, approverId, coApproverIds } = applicable;
     const token = generateApprovalToken();
     const updated = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.expenseReport.update({
@@ -441,7 +425,7 @@ export class ExpenseReportService {
       });
       return updated;
     });
-    await this.notifier.notifySubmitted(this.toContext(existing), approverId, token);
+    await this.notifier.notifySubmitted(this.toContext(existing), approverId, token, coApproverIds);
     return updated;
   }
 
@@ -464,7 +448,7 @@ export class ExpenseReportService {
     const member = await this.prisma.approvalPoolMember.findFirst({
       where: { ApprovalPoolId: report.ApprovalPoolId, StepOrder: report.CurrentApprovalStep },
     });
-    if (!member || (await this.resolveActualApprover(member, new Date())) !== approverEmployeeId) {
+    if (!member || !canDecide(resolveApprovers(member), approverEmployeeId)) {
       throw new ForbiddenException("Vous n'êtes pas le validateur actuel de cette note de frais");
     }
   }
@@ -507,7 +491,7 @@ export class ExpenseReportService {
       });
 
       if (applicable) {
-        const { member: nextStep, approverId } = applicable;
+        const { member: nextStep, approverId, coApproverIds } = applicable;
         const updated = await tx.expenseReport.update({
           where: { Id: id },
           data: { Status: `InApprovalN${nextStep.StepOrder}`, CurrentApprovalStep: nextStep.StepOrder },
@@ -525,15 +509,15 @@ export class ExpenseReportService {
             Token: nextToken,
           },
         });
-        return { updated, nextApproverId: approverId as string | null };
+        return { updated, nextApproverId: approverId as string | null, coApproverIds };
       }
 
       const updated = await tx.expenseReport.update({ where: { Id: id }, data: { Status: 'Approved' }, include: REPORT_INCLUDE });
-      return { updated, nextApproverId: null };
+      return { updated, nextApproverId: null, coApproverIds: [] as string[] };
     });
 
     if (result.nextApproverId) {
-      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId, nextToken as string);
+      await this.notifier.notifyProgressed(this.toContext(existing), result.nextApproverId, nextToken as string, result.coApproverIds);
     } else {
       await this.notifier.notifyApproved(this.toContext(existing), { autoApproved: false });
     }
