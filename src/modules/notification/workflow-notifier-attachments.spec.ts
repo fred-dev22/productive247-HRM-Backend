@@ -60,6 +60,20 @@ describe('WorkflowNotifierService : justificatif joint a l email du validateur',
     expect(validatorHtml).toContain('Certificat medical confidentiel');
   });
 
+  it("le solde du demandeur n'est pas envoye a l'interimaire, mais reste dans l'email du validateur", async () => {
+    const { service, mail } = build({ files: [], skipped: [] });
+    await service.notifySubmitted(
+      leaveCtx({ interimEmployeeId: 'int', details: [{ label: 'Type de congé', value: 'Annuel' }, { label: 'Solde', value: '44.5 jour(s)' }] }),
+      'val', 'token',
+    );
+    const interimHtml = mail.send.mock.calls.find(([m]: any) => m.to === 'int@test.mg')![0].html;
+    const validatorHtml = mail.send.mock.calls.find(([m]: any) => m.to === 'val@test.mg')![0].html;
+    expect(interimHtml).not.toContain('44.5 jour(s)');
+    expect(interimHtml).not.toContain('Solde');
+    expect(interimHtml).toContain('Annuel');
+    expect(validatorHtml).toContain('44.5 jour(s)');
+  });
+
   it("si Graph refuse le message avec pieces jointes, le validateur recoit l'email sans fichier et avec une mention", async () => {
     const { service, mail } = build({ files: [FILE], skipped: [] });
     mail.send.mockImplementation(async (m: any) => !(m.to === 'val@test.mg' && m.attachments?.length));

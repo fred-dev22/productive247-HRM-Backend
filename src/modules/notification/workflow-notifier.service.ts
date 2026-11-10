@@ -23,6 +23,10 @@ const KIND_HEADER_LABEL: Record<WorkflowKind, string> = {
   expense: 'Note de frais',
 };
 
+// Lignes du detail de la demande que l'intérimaire ne voit pas dans son email :
+// le motif (texte libre, parfois medical) et le solde du demandeur.
+const INTERIM_HIDDEN_DETAILS = ['Motif', 'Solde'];
+
 // Ecran "mes demandes" correspondant, cote employe — le meme pour l'espace
 // RH et l'espace employe (voir router.ts, ROUTE_PERMISSIONS n'en fait pas
 // une route distincte par espace). `?open=<id>` : la liste ouvre directement
@@ -265,9 +269,10 @@ export class WorkflowNotifierService {
       this.mail.send({
         to: interim.email,
         subject: title,
-        // Le motif (texte libre, parfois medical) n'est pas transmis a
-        // l'interimaire, au meme titre que le justificatif.
-        html: renderEmailHtml({ accent: 'primary', chipLabel: 'Intérim', headerLabel: KIND_HEADER_LABEL[ctx.kind], title, bodyLines: [message], details: ctx.details?.filter((d) => d.label !== 'Motif') }),
+        // Le motif (texte libre, parfois medical), le justificatif et le solde du
+        // demandeur ne sont pas transmis a l'interimaire (retour client Congélo
+        // du 10/11 : ne pas afficher le solde du demandeur).
+        html: renderEmailHtml({ accent: 'primary', chipLabel: 'Intérim', headerLabel: KIND_HEADER_LABEL[ctx.kind], title, bodyLines: [message], details: ctx.details?.filter((d) => !INTERIM_HIDDEN_DETAILS.includes(d.label)) }),
       }),
     ]);
   }
