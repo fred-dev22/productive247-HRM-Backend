@@ -10,8 +10,7 @@ import {
   ApproverSpec,
   canDecide,
   findApplicableStep as findApplicableApproverStep,
-  resolveApprovers,
-} from '../../common/utils/approver-resolution.util';
+  resolveApprovers, DECISION_PRIMARY_INCLUDE, markActingAsInterim, withOnBehalfOf } from '../../common/utils/approver-resolution.util';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
 import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
 import { generateApprovalToken } from '../../common/approval-token';
@@ -237,9 +236,9 @@ export class ExpenseReportService {
     const decisions = await this.prisma.approvalDecision.findMany({
       where: { EntityType: 'ExpenseReport', EntityId: id },
       orderBy: { StepOrder: 'asc' },
-      include: { validatedByEmployee: { select: { Id: true, FullName: true } } },
+      include: DECISION_PRIMARY_INCLUDE,
     });
-    return { ...report, decisions, TotalAmount: this.computeTotal(report.lines) };
+    return { ...report, decisions: withOnBehalfOf(decisions), TotalAmount: this.computeTotal(report.lines) };
   }
 
   private async attachTotals<T extends { lines: { Amount: unknown }[] }>(reports: T[]): Promise<(T & { TotalAmount: number })[]> {
@@ -335,7 +334,7 @@ export class ExpenseReportService {
         result.push(r);
       }
     }
-    return this.attachTotals(result);
+    return markActingAsInterim(this.prisma, 'ExpenseReport', await this.attachTotals(result), employeeId);
   }
 
   // ── Workflow ─────────────────────────────────────────────────────────

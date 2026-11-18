@@ -11,8 +11,7 @@ import {
   ApproverSpec,
   canDecide,
   findApplicableStep as findApplicableApproverStep,
-  resolveApprovers,
-} from '../../common/utils/approver-resolution.util';
+  resolveApprovers, DECISION_PRIMARY_INCLUDE, markActingAsInterim, withOnBehalfOf } from '../../common/utils/approver-resolution.util';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
 import { WorkflowNotifierService, WorkflowContext } from '../notification/workflow-notifier.service';
 import { formatDateFr } from '../mail/email-templates';
@@ -434,14 +433,14 @@ export class MissionOrderService {
     const decisions = await this.prisma.approvalDecision.findMany({
       where: { EntityType: 'MissionOrder', EntityId: id },
       orderBy: { StepOrder: 'asc' },
-      include: { validatedByEmployee: { select: { Id: true, FullName: true } } },
+      include: DECISION_PRIMARY_INCLUDE,
     });
     const allowance = await this.computeAllowanceEstimate(
       missionOrder.employee.EmployeeCategoryId,
       missionOrder.MissionCategory,
       Number(missionOrder.DaysCount),
     );
-    return { ...missionOrder, decisions, allowance };
+    return { ...missionOrder, decisions: withOnBehalfOf(decisions), allowance };
   }
 
   // "Mes missions" inclut aussi celles creees pour un autre employe
@@ -535,7 +534,7 @@ export class MissionOrderService {
         result.push(mo);
       }
     }
-    return this.attachEstimatedTotals(result);
+    return markActingAsInterim(this.prisma, 'MissionOrder', await this.attachEstimatedTotals(result), employeeId);
   }
 
   // ── Workflow ─────────────────────────────────────────────────────────

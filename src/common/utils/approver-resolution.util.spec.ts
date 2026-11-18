@@ -1,4 +1,4 @@
-import { canDecide, directValidatorSpec, findApplicableStep, resolveApprovers } from './approver-resolution.util';
+import { canDecide, directValidatorSpec, findApplicableStep, resolveApprovers, withOnBehalfOf } from './approver-resolution.util';
 
 describe('resolveApprovers', () => {
   it('sans interimaire : le titulaire seul', () => {
@@ -60,5 +60,30 @@ describe('directValidatorSpec', () => {
     } as never;
     expect(await directValidatorSpec(prisma, 'V')).toEqual({ EmployeeId: 'V', InterimEmployeeId: 'I' });
     expect(await directValidatorSpec(prisma, 'X')).toEqual({ EmployeeId: 'X', InterimEmployeeId: null });
+  });
+});
+
+describe('withOnBehalfOf', () => {
+  const hery = { Id: 'hery', FullName: 'Hery' };
+  const lalaina = { Id: 'lalaina', FullName: 'Lalaina' };
+
+  it("signale l'etape decidee par l'interimaire", () => {
+    const [d] = withOnBehalfOf([{ Decision: 'Approved', validatedByEmployee: lalaina, approvalPoolMember: { employee: hery } }]);
+    expect(d.OnBehalfOf).toEqual(hery);
+  });
+
+  it('ne signale rien quand le validateur prevu decide lui-meme', () => {
+    const [d] = withOnBehalfOf([{ Decision: 'Approved', validatedByEmployee: hery, approvalPoolMember: { employee: hery } }]);
+    expect(d.OnBehalfOf).toBeNull();
+  });
+
+  it('ne signale rien tant que l etape est en attente', () => {
+    const [d] = withOnBehalfOf([{ Decision: 'Pending', validatedByEmployee: hery, directValidatorEmployee: hery }]);
+    expect(d.OnBehalfOf).toBeNull();
+  });
+
+  it('couvre le validateur direct', () => {
+    const [d] = withOnBehalfOf([{ Decision: 'Rejected', validatedByEmployee: lalaina, directValidatorEmployee: hery }]);
+    expect(d.OnBehalfOf).toEqual(hery);
   });
 });

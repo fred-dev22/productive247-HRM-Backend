@@ -12,6 +12,9 @@ import {
   directValidatorSpec,
   findApplicableStep as findApplicableApproverStep,
   resolveApprovers,
+  DECISION_PRIMARY_INCLUDE,
+  markActingAsInterim,
+  withOnBehalfOf,
 } from '../../common/utils/approver-resolution.util';
 import { ApprovalPoolService } from '../approval-pool/approval-pool.service';
 import { LeaveTransactionService } from '../leave-transaction/leave-transaction.service';
@@ -827,12 +830,10 @@ export class LeaveRequestService {
     const decisions = await this.prisma.approvalDecision.findMany({
       where: { EntityType: 'LeaveRequest', EntityId: id },
       orderBy: { StepOrder: 'asc' },
-      include: {
-        validatedByEmployee: { select: { Id: true, FullName: true } },
-      },
+      include: DECISION_PRIMARY_INCLUDE,
     });
     const withBalance = await this.attachBalanceFlag(leaveRequest);
-    return { ...withBalance, decisions };
+    return { ...withBalance, decisions: withOnBehalfOf(decisions) };
   }
 
   // "Mes demandes" inclut aussi les demandes que j'ai creees pour un autre
@@ -1124,7 +1125,7 @@ export class LeaveRequestService {
         result.push(lr);
       }
     }
-    return this.attachBalanceFlags(result);
+    return markActingAsInterim(this.prisma, 'LeaveRequest', await this.attachBalanceFlags(result), employeeId);
   }
 
   // Demandes deja decidees par ce validateur (approuve/refuse/retourne), peu

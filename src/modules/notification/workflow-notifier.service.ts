@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from './notification.service';
+import { isOnApprovedLeave } from '../../common/utils/approver-resolution.util';
 import { MailService } from '../mail/mail.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { AttachmentService, type EmailAttachment } from '../attachment/attachment.service';
@@ -241,18 +242,19 @@ export class WorkflowNotifierService {
       this.notifyPeople([approver], { type: ctx.kind, title, message, href: hrefToValidate(ctx) }),
       this.sendValidationEmail(ctx, approver.email, title, message, token),
       this.notifyInterim(ctx, beneficiary.name),
-      this.notifyCoApprovers(ctx, coApproverIds, title, message),
+      this.notifyCoApprovers(ctx, coApproverIds, approverId, title, message),
     ]);
   }
 
-  private async notifyCoApprovers(ctx: WorkflowContext, coApproverIds: string[], title: string, message: string) {
+  // Interimaire du validateur : il VOIT la demande dans son "A valider" tout le
+  // temps, mais n'est prevenu que si le titulaire est en conge approuve (retour
+  // client du 12/11 : ne pas l'agacer). Jamais d'email : notification dans
+  // l'application seulement.
+  private async notifyCoApprovers(ctx: WorkflowContext, coApproverIds: string[], primaryId: string, title: string, message: string) {
     if (coApproverIds.length === 0) return;
+    if (!(await isOnApprovedLeave(this.prisma, primaryId))) return;
     const people = await Promise.all(coApproverIds.map((id) => this.resolvePerson(id)));
-    const coMessage = `${message} (en tant qu'intérimaire)`;
-    await Promise.all([
-      this.notifyPeople(people, { type: ctx.kind, title, message: coMessage, href: hrefToValidate(ctx) }),
-      ...people.map((p) => this.sendValidationEmail(ctx, p.email, title, coMessage, null)),
-    ]);
+    await this.notifyPeople(people, { type: ctx.kind, title, message: `${message} (en tant qu'intérimaire)`, href: hrefToValidate(ctx) });
   }
 
   // Informe l'intérimaire désigné, à la soumission : il n'était jusqu'ici
@@ -293,7 +295,7 @@ export class WorkflowNotifierService {
     await Promise.all([
       this.notifyPeople([nextApprover], { type: ctx.kind, title, message, href: hrefToValidate(ctx) }),
       this.sendValidationEmail(ctx, nextApprover.email, title, message, token),
-      this.notifyCoApprovers(ctx, coApproverIds, title, message),
+      this.notifyCoApprovers(ctx, coApproverIds, nextApproverId, title, message),
     ]);
     await this.notifyPeople([beneficiary, creator], {
       type: ctx.kind,
