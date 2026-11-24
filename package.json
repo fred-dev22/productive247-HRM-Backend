@@ -6,6 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "prebuild": "prisma generate",
     "build": "nest build",
     "build:iis": "prisma generate && ncc build src/main.ts -o dist/standalone -t && copy src\\modules\\mail\\congelo-logo-base64.txt dist\\standalone\\ && xcopy prisma dist\\standalone\\prisma /E /I /Y",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
