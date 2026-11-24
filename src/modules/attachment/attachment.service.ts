@@ -1,6 +1,8 @@
-import { ForbiddenException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, InternalServerErrorException, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LocalStorageService } from './local-storage.service';
 import { SharePointService } from './sharepoint.service';
+import { StorageSettingsService } from './storage-settings.service';
 import type { AttachmentEntityType } from './dto/upload-attachment.dto';
 
 // Pieces jointes d'un email (voir MailService.send). Le contenu est en base64,
@@ -24,7 +26,36 @@ export class AttachmentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sharePoint: SharePointService,
+    private readonly local: LocalStorageService,
+    private readonly storage: StorageSettingsService,
   ) {}
+
+  // Relit le contenu d'un fichier la ou il a ete depose (dossier du serveur ou
+  // SharePoint), meme si le mode actif a change depuis : chaque mode garde ses
+  // reglages. Une erreur claire si ce mode n'est plus configure.
+  private async readBytes(row: { StorageProvider: string | null; FileUrl: string }): Promise<Buffer> {
+    const cfg = await this.storage.resolve();
+    if (row.StorageProvider === 'Local') {
+      if (!cfg?.localPath) throw new Error("Le dossier de stockage du serveur n'est plus configuré");
+      return this.local.read(cfg.localPath, row.FileUrl);
+    }
+    if (!cfg?.graph) throw new Error("SharePoint n'est plus configuré");
+    return this.sharePoint.downloadFile(cfg.graph, row.FileUrl);
+  }
+
+  // Contenu d'une piece jointe pour l'affichage dans l'application (le navigateur
+  // ne peut pas ouvrir un fichier du serveur par simple lien : il faut le jeton).
+  async download(id: string, requesterEmployeeId: string, permissions: Set<string>) {
+    const row = await this.prisma.attachment.findUnique({ where: { Id: id } });
+    if (!row) throw new NotFoundException(`Pièce jointe ${id} introuvable`);
+    await this.assertCanAccess(row.EntityType as AttachmentEntityType, row.EntityId, requesterEmployeeId, permissions);
+    try {
+      return { buffer: await this.readBytes(row), fileName: row.FileName, mimeType: row.MimeType };
+    } catch (err) {
+      this.logger.error(`Lecture de la piece jointe ${id} impossible : ${err instanceof Error ? err.message : String(err)}`);
+      throw new NotFoundException('Le fichier est introuvable sur le serveur de stockage');
+    }
+  }
 
   // Prepare les pieces jointes d'un document pour les joindre a un email. Ne
   // leve JAMAIS : un email est un effet de bord d'une action metier deja
@@ -49,7 +80,7 @@ export class AttachmentService {
           continue;
         }
         try {
-          const buffer = await this.sharePoint.downloadFile(row.FileUrl);
+          const buffer = await this.readBytes(row);
           if (total + buffer.length > EMAIL_ATTACHMENTS_MAX_BYTES) {
             skipped.push(row.FileName);
             continue;
@@ -172,15 +203,30 @@ export class AttachmentService {
   ) {
     await this.assertCanAccess(entityType, entityId, uploadedBy, permissions);
 
+    const cfg = await this.storage.resolve();
+    const graph = cfg?.graph ?? null;
+    const localPath = cfg?.localPath ?? null;
+    const ready = cfg && (cfg.provider === 'Local' ? !!localPath : !!graph);
+    if (!cfg || !ready) {
+      throw new ServiceUnavailableException(
+        "Le stockage des fichiers n'est pas configuré. Veuillez contacter l'administrateur de l'application.",
+      );
+    }
+
     let uploaded: { url: string; size: number };
     try {
-      uploaded = await this.sharePoint.uploadFile(file.originalname, file.buffer, file.mimetype);
+      if (cfg.provider === 'Local') {
+        const r = await this.local.save(localPath as string, file.originalname, file.buffer);
+        uploaded = { url: r.storedName, size: r.size };
+      } else {
+        uploaded = await this.sharePoint.uploadFile(graph as NonNullable<typeof graph>, file.originalname, file.buffer, file.mimetype);
+      }
     } catch (err) {
-      // sharepoint.service.ts leve une Error brute (souvent en anglais, ex.
-      // panne/mauvaise config Graph), jamais affichee telle quelle. Journalisee
-      // ici : avec un justificatif obligatoire, un SharePoint mal configure
-      // rend la soumission impossible, il faut pouvoir en voir la cause.
-      this.logger.error(`Televersement SharePoint echoue : ${err instanceof Error ? err.message : String(err)}`);
+      // Les erreurs de stockage sont brutes (souvent en anglais), jamais affichees
+      // telles quelles. Journalisees ici : avec un justificatif obligatoire, un
+      // stockage mal configure rend la soumission impossible, il faut pouvoir
+      // en voir la cause.
+      this.logger.error(`Televersement (${cfg.provider}) echoue : ${err instanceof Error ? err.message : String(err)}`);
       throw new InternalServerErrorException('Le téléversement du fichier a échoué, veuillez réessayer');
     }
     const { url, size } = uploaded;
@@ -190,6 +236,7 @@ export class AttachmentService {
         EntityId: entityId,
         FileName: file.originalname,
         FileUrl: url,
+        StorageProvider: cfg.provider === 'Local' ? 'Local' : 'SharePoint',
         FileSize: size,
         MimeType: file.mimetype,
         CreatedBy: uploadedBy,
@@ -246,9 +293,18 @@ export class AttachmentService {
     if (attachment.EntityType === 'LeaveRequest') {
       await this.assertLeaveJustificatifRemovable(attachment.EntityId);
     }
-    // Le fichier reste sur SharePoint (pas d'appel DELETE Graph) — on retire
-    // seulement le lien applicatif ; simplicite deliberee (evite un dossier
-    // "Upload" qui grossit indefiniment n'est pas un objectif de ce lot).
-    return this.prisma.attachment.delete({ where: { Id: id } });
+    // Un fichier SharePoint reste sur SharePoint (pas d'appel DELETE Graph) : on
+    // retire seulement le lien applicatif. Un fichier du serveur est supprime du
+    // dossier (sans bloquer si le fichier a deja disparu).
+    const deleted = await this.prisma.attachment.delete({ where: { Id: id } });
+    if (attachment.StorageProvider === 'Local') {
+      const cfg = await this.storage.resolve();
+      if (cfg?.localPath) {
+        await this.local.remove(cfg.localPath, attachment.FileUrl).catch((err) =>
+          this.logger.warn(`Fichier ${attachment.FileUrl} non supprime du dossier : ${err instanceof Error ? err.message : String(err)}`),
+        );
+      }
+    }
+    return deleted;
   }
 }
